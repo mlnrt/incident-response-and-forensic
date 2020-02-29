@@ -1,6 +1,6 @@
 # Automated Incident Response and Forensic on AWS
 This is an example of an automated incident response and forensic analysis on AWS using AWS GuardDuty, a StepFunction and Lambda functions. The CloudFormation template and code in this repository aim at providing everything to:
-* trigger improper security behavior on a web application, 
+* trigger improper security behavior on a web application server, 
 * see the event picked-up by GuardDuty
 * execute as a response a StepFunction which will control an entire incident response and forensic workflow (details below)
 * see the web application auto-heal from the incident
