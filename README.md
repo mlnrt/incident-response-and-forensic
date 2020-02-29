@@ -36,6 +36,8 @@ This diagram represents the entire workflow deployed using the last CloudFormati
 * exporting all data collected to S3
 * stopping the misbehaving instance
 
+Look at this video for the detailed explanation and the demo: https://youtu.be/Uis8vmlr_WI
+
 ![](images/incident-response-workflow.jpg)
 
 # Disclaimer
