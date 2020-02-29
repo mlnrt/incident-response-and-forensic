@@ -1,6 +1,6 @@
 ---
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Create the Incident Response by Ben Potter @Amazon - modified by Matthieu Lienart
+Description: Create the Incident Response by Ben Potter @Amazon Web Services - modified by Matthieu Lienart
 # See https://www.youtube.com/watch?v=f_EcwmmXkXk for Ben Potter's demo at AWS Summit London 2018
 # For Ben Potter's code see the following GitHub repo: https://github.com/awslabs/aws-security-automation/tree/master/EC2%20Auto%20Clean%20Room%20Forensics 
 
