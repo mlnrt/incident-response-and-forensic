@@ -8,10 +8,21 @@ This is an example of an automated incident response and forensic analysis on AW
 
 # Credits
 * This demo is primarily based on the demo released by Ben Potter (https://www.linkedin.com/in/benjipotter/) at AWS Summit London 2018: https://www.youtube.com/watch?v=f_EcwmmXkXk
-
-The code of his demo is available here : https://github.com/awslabs/aws-security-automation/tree/master/EC2%20Auto%20Clean%20Room%20Forensics
+* The code of his demo is available here : https://github.com/awslabs/aws-security-automation/tree/master/EC2%20Auto%20Clean%20Room%20Forensics
 * I also reused and modified a VPC CloudFormation template released by @Levon Becker for Stelligent available here: https://github.com/stelligent/cloudformation_templates/blob/master/infrastructure/vpc.yml
 * I also reused shell scripts published by Ryan Holland https://www.linkedin.com/in/rcholland/ and Oliver Cahagne https://www.linkedin.com/in/ocahagne/ on AWS Labs to simulate security breaches to test GuardDuty: https://github.com/awslabs/amazon-guardduty-tester/blob/master/guardduty_tester.sh
+
+# Pre-requisties
+* Activate AWS GuardDuty on your AWS account
+* Download the two Lambda functions ZIP code (one is for the NginxWebApp YAML template, the other for the Forensic YAML tempalte).
+
+# Disclaimer
+The code provided in the Lambda functions performing the incident response and forensic analysis is written for AWS Ubuntu Server 18.04 LTS. If you choose a different Linux distribution, you will have to update at the minimum:
+* the code in the NginxWebApp-template.yaml file, used to deploy and configure Nginx on the EC2 instance after launch
+* the code in the captureMemoryDumpForForensic.py Lambda function to install LiME on the instance and perform the memory dump
+* the code in the createForensicInstance.py to create the forensic instance in the Quarantine VPC and install all the tools (e.g. sleuthkit, vloatility...) to perform forensic analysis
+* the code in the runSnapshotForensicAnalysis.py to launch commands using Systems Manager to perform the snapshot's forensic analysis
+* the code in the runMemoryForensicAnalysis.py to launch commands using Systems Manager to perform the memory dump forensic analysis
 
 # Demo envrionment
 ![](images/architecture-diagram.jpg)
