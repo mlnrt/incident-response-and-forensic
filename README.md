@@ -17,7 +17,7 @@ This is an example of an automated incident response and forensic analysis on AW
 * Download the two Lambda functions ZIP code (one is for the NginxWebApp YAML template, the other for the Forensic YAML tempalte).
 
 # The demo envrionment
-The is the environment deployed by the 4 CloudFormation templates proposed here:
+This is the environment deployed by the 4 CloudFormation templates proposed here:
 1. The production VPC 
 2. The Quarantine VPC
 3. The Nginx web application server
