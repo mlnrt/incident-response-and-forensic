@@ -28,10 +28,15 @@ The is the environment deployed by the 4 CloudFormation templates proposed here:
 See for the explanation video: https://youtu.be/tUGf4uHOhCA
 
 # The incident response and forensic analysis workflow 
+This diagram represents the entire workflow deployed using the last CloudFormation template which uses a StepFunction and Lambda functions to perform the entire incident response and forensic analysis:
+* notifying the administrators of the incident and the steps taken
+* taking memory dump and EC2 instance snapshot
+* installing a forensic instance
+* performing memory snapshot and memory dump analysis
+* exporting all data collected to S3
+* stopping the misbehaving instance
 
 ![](images/incident-response-workflow.jpg)
-
-See for the video of the demo: https://youtu.be/Uis8vmlr_WI
 
 # Disclaimer
 The code provided in the Lambda functions performing the incident response and forensic analysis is written for AWS Ubuntu Server 18.04 LTS. If you choose a different Linux distribution, you will have to update at the minimum:
