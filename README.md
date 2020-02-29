@@ -16,6 +16,23 @@ This is an example of an automated incident response and forensic analysis on AW
 * Activate AWS GuardDuty on your AWS account
 * Download the two Lambda functions ZIP code (one is for the NginxWebApp YAML template, the other for the Forensic YAML tempalte).
 
+# The demo envrionment
+The is the environment deployed by the 4 CloudFormation templates proposed here:
+1. The production VPC 
+2. The Quarantine VPC
+3. The Nginx web application server
+4. The incident response and forensic analysis StepFunction and Lambda functions
+
+![](images/architecture-diagram.jpg)
+
+See for the explanation video: https://youtu.be/tUGf4uHOhCA
+
+# The incident response and forensic analysis workflow 
+
+![](images/incident-response-workflow.jpg)
+
+See for the video of the demo: https://youtu.be/Uis8vmlr_WI
+
 # Disclaimer
 The code provided in the Lambda functions performing the incident response and forensic analysis is written for AWS Ubuntu Server 18.04 LTS. If you choose a different Linux distribution, you will have to update at the minimum:
 * the code in the NginxWebApp-template.yaml file, used to deploy and configure Nginx on the EC2 instance after launch
@@ -23,9 +40,3 @@ The code provided in the Lambda functions performing the incident response and f
 * the code in the createForensicInstance.py to create the forensic instance in the Quarantine VPC and install all the tools (e.g. sleuthkit, vloatility...) to perform forensic analysis
 * the code in the runSnapshotForensicAnalysis.py to launch commands using Systems Manager to perform the snapshot's forensic analysis
 * the code in the runMemoryForensicAnalysis.py to launch commands using Systems Manager to perform the memory dump forensic analysis
-
-# Demo envrionment
-![](images/architecture-diagram.jpg)
-
-
-
