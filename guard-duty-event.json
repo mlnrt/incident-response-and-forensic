@@ -1,0 +1,115 @@
+{
+    "version": "0",
+    "id": "11111aa11-2222-3bb3-44cc-55555555555aa",
+    "detail-type": "GuardDuty Finding",
+    "source": "aws.guardduty",
+    "account": "000111222333",
+    "time": "2020-01-01T00:00:00Z",
+    "region": "eu-west-1",
+    "resources": [],
+    "detail": {
+        "schemaVersion": "2.0",
+        "accountId": "000111222333",
+        "region": "eu-west-1",
+        "partition": "aws",
+        "id": "11111aa1122223bb344cc55555555555aa",
+        "arn": "arn:aws:guardduty:eu-west-1:000111222333:detector/11111aa1122223bb344cc55555555555aa/finding/11111aa1122223bb344cc55555555555aa",
+        "type": "Trojan:EC2/DNSDataExfiltration",
+        "resource": {
+            "resourceType": "Instance",
+            "instanceDetails": {
+                "instanceId": "i-0011222aa333333b4",
+                "instanceType": "t3.micro",
+                "launchTime": "2020-01-01T00:00:00Z",
+                "platform": null,
+                "productCodes": [],
+                "iamInstanceProfile": {
+                    "arn": "arn:aws:iam::000111222333:instance-profile/Role_for_Nginx_Web_App_Instance",
+                    "id": "AAAAABBBBBCCCCCDDDDDD"
+                },
+                "networkInterfaces": [
+                    {
+                        "ipv6Addresses": [],
+                        "networkInterfaceId": "eni-0cee7e6414c0911ad",
+                        "privateDnsName": "ip-172-16-4-218.eu-west-1.compute.internal",
+                        "privateIpAddress": "172.16.4.218",
+                        "privateIpAddresses": [
+                            {
+                                "privateDnsName": "ip-172-16-4-218.eu-west-1.compute.internal",
+                                "privateIpAddress": "172.16.4.218"
+                            }
+                        ],
+                        "subnetId": "subnet-0ae87a58fa4cc468b",
+                        "vpcId": "vpc-0a245bde5d3b115e0",
+                        "securityGroups": [
+                            {
+                                "groupName": "NginxWebApp-NginxAccessSecurityGroup-50D4YJXHL2C4",
+                                "groupId": "sg-08ed9850d19dbaf7d"
+                            }
+                        ]
+                    }
+                ],
+                "tags": [
+                    {
+                        "key": "Owner",
+                        "value": "FirstName LastName"
+                    },
+                    {
+                        "key": "Name",
+                        "value": "LAB-IR_NginxWebApp_ASGroup"
+                    },
+                    {
+                        "key": "aws:cloudformation:stack-name",
+                        "value": "NginxWebApp"
+                    },
+                    {
+                        "key": "Project",
+                        "value": "LAB-IR"
+                    },
+                    {
+                        "key": "aws:autoscaling:groupName",
+                        "value": "NginxWebApp-NginxWebAppASGroup-1A06OS804SAF0"
+                    },
+                    {
+                        "key": "aws:cloudformation:logical-id",
+                        "value": "NginxWebAppASGroup"
+                    },
+                    {
+                        "key": "aws:cloudformation:stack-id",
+                        "value": "arn:aws:cloudformation:eu-west-1:000111222333:stack/NginxWebApp/11111aa11-2222-3bb3-44cc-55555555555aa"
+                    }
+                ],
+                "instanceState": "running",
+                "availabilityZone": "eu-west-1b",
+                "imageId": "ami-035966e8adab4aaad",
+                "imageDescription": "Canonical, Ubuntu, 18.04 LTS, amd64 bionic image build on 2020-01-12"
+            }
+        },
+        "service": {
+            "serviceName": "guardduty",
+            "detectorId": "11111aa1122223bb344cc55555555555aa",
+            "action": {
+                "actionType": "DNS_REQUEST",
+                "dnsRequestAction": {
+                    "domain": "0ybb2enpjyobgcbvgcgh33sdgwkzscgaffxmqmx5cwcb1beskbc05b8snagz_a.9wygbgzobgygprumlzk8jeysnib4rkbecoaguus1g.loganding123test.com",
+                    "protocol": "0",
+                    "blocked": false
+                }
+            },
+            "resourceRole": "TARGET",
+            "additionalInfo": {
+                "domain": "0ybb2enpjyobgcbvgcgh33sdgwkzscgaffxmqmx5cwcb1beskbc05b8snagz_a.9wygbgzobgygprumlzk8jeysnib4rkbecoaguus1g.loganding123test.com"
+            },
+            "evidence": null,
+            "eventFirstSeen": "2020-01-01T00:00:00Z",
+            "eventLastSeen": "2020-01-01T00:00:00Z",
+            "archived": false,
+            "count": 1
+        },
+        "severity": 8,
+        "createdAt": "2020-01-01T00:00:00.026Z",
+        "updatedAt": "2020-01-01T00:00:00.026Z",
+        "title": "Data exfiltration through DNS queries from EC2 instance i-0011222aa333333b4.",
+        "description": "EC2 instance i-0011222aa333333b4 is attempting to query domain names that resemble exfiltrated data. This could be an indication of a compromised instance."
+    }
+}
