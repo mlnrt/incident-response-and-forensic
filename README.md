@@ -77,9 +77,9 @@ Note: steps 2 and 3 can be inverted/performed simultaneously since they  do not 
 3. From there SSH into one of the two NginxWebApp instance
 4. go into the __/tmp/attack__ folder
 5. Launch one of the 3 script generating an improper security behavior:
-   * bitcoin-attack.sh
-   * dns-exfiltration-attack.sh
-   * backdoor-attack.sh
+   * __bitcoin-attack.sh__
+   * __dns-exfiltration-attack.sh__
+   * __backdoor-attack.sh__
 ## Manual trigger
 1. Copy the provided __guard-duty-event.json__ file
 2. Replace the instance ID __i-0011222aa333333b4__ by one of the NginxWebApp instance ID
