@@ -83,7 +83,7 @@ Note: steps 2 and 3 can be inverted/performed simultaneously since they  do not 
 ## Manual trigger
 1. Copy the provided __guard-duty-event.json__ file
 2. Replace the instance ID __i-0011222aa333333b4__ by one of the NginxWebApp instance ID
-3. Open the __[your project name]_sec-ir-0-parseEventAndStartForensic__ Lambda function
+3. Open the __\<your project name\>_sec-ir-0-parseEventAndStartForensic__ Lambda function
 4. create a test with the JSON content and run it
 # Disclaimer
 The code provided in the Lambda functions performing the incident response and forensic analysis is written for Ubuntu Server 18.04 LTS. If you choose a different Linux distribution, you will have to update at the minimum:
