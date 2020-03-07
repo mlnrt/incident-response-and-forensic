@@ -21,7 +21,7 @@ This is an example of an automated incident response and forensic analysis on AW
 * Create SSH Key Pairs for your EC2 instances (In the __EC2 console__, go to __Network & Security__ > __Key Pairs__). The same key will be installed on all instances (bastion host and Nginx web app instances). Extract the private key from the key pair in the OpenSSH format.
 * If you choose to enable VPC Flow Logs to S3, have a bucket ready for it
 * Prepare a S3 bucket where the outputs of the forensic analysis will be stored
-* Check the AMI name in your region of the AWS Ubuntu Server 18.04 LTS 
+* Check the AMI name in your region of the Ubuntu Server 18.04 LTS 
 ![](images/ami-name.jpg)
 
 # The demo envrionment
@@ -83,10 +83,10 @@ Note: steps 2 and 3 can be inverted/performed simultaneously since they  do not 
 ## Manual trigger
 1. Copy the provided __guard-duty-event.json__ file
 2. Replace the instance ID __i-0011222aa333333b4__ by one of the NginxWebApp instance ID
-3. Open the __<your project name>_sec-ir-0-parseEventAndStartForensic__ Lambda function
+3. Open the __[your project name]_sec-ir-0-parseEventAndStartForensic__ Lambda function
 4. create a test with the JSON content and run it
 # Disclaimer
-The code provided in the Lambda functions performing the incident response and forensic analysis is written for AWS Ubuntu Server 18.04 LTS. If you choose a different Linux distribution, you will have to update at the minimum:
+The code provided in the Lambda functions performing the incident response and forensic analysis is written for Ubuntu Server 18.04 LTS. If you choose a different Linux distribution, you will have to update at the minimum:
 * the code in the NginxWebApp-template.yaml file, used to deploy and configure Nginx on the EC2 instance after launch
 * the code in the captureMemoryDumpForForensic.py Lambda function to install LiME on the instance and perform the memory dump
 * the code in the createForensicInstance.py to create the forensic instance in the Quarantine VPC and install all the tools (e.g. sleuthkit, vloatility...) to perform forensic analysis
