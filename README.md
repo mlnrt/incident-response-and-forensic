@@ -7,10 +7,10 @@ This is an example of an automated incident response and forensic analysis on AW
 * receive basic snapshot and memory forensic analysis together with all the data to conduct deeper forensic analysis post-incident
 
 # Credits
-* This demo is primarily based on the demo released by Ben Potter (https://www.linkedin.com/in/benjipotter/) at AWS Summit London 2018: https://www.youtube.com/watch?v=f_EcwmmXkXk
+* This demo is primarily based on the demo released by Ben Potter at AWS Summit London 2018: https://www.youtube.com/watch?v=f_EcwmmXkXk
 * The code of his demo is available here : https://github.com/awslabs/aws-security-automation/tree/master/EC2%20Auto%20Clean%20Room%20Forensics
-* I also reused and modified a VPC CloudFormation template released by @Levon Becker for Stelligent available here: https://github.com/stelligent/cloudformation_templates/blob/master/infrastructure/vpc.yml
-* I also reused shell scripts published by Ryan Holland https://www.linkedin.com/in/rcholland/ and Oliver Cahagne https://www.linkedin.com/in/ocahagne/ on AWS Labs to simulate security breaches to test GuardDuty: https://github.com/awslabs/amazon-guardduty-tester/blob/master/guardduty_tester.sh
+* I also reused and modified a VPC CloudFormation template released by Levon Becker for Stelligent available here: https://github.com/stelligent/cloudformation_templates/blob/master/infrastructure/vpc.yml
+* I also reused shell scripts published by Ryan Holland and Oliver Cahagne hon AWS Labs to simulate security breaches to test GuardDuty: https://github.com/awslabs/amazon-guardduty-tester/blob/master/guardduty_tester.sh
 
 # Pre-requisties
 * Activate AWS GuardDuty on your AWS account
