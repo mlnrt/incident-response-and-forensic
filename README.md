@@ -14,7 +14,12 @@ This is an example of an automated incident response and forensic analysis on AW
 
 # Pre-requisties
 * Activate AWS GuardDuty on your AWS account
-* Download the two Lambda functions ZIP code (one is for the NginxWebApp YAML template, the other for the Forensic YAML tempalte).
+* Have a Slack channel ready. Alerts will be send to that channel
+* Download the two Lambda functions ZIP code (one is for the NginxWebApp YAML template, the other for the Forensic YAML tempalte) and save them into one of your S3 bucket.
+* Create SSH Key Pairs for your EC2 instances (In the __EC2 console__, go to __Network & Security__ > __Key Pairs__)
+* If you choose to enable VPC Flow Logs to S3, have a bucket ready for it
+* Check the AMI name in your region of the AWS Ubuntu Server 18.04 LTS 
+![](images/ami-name.jpg)
 
 # The demo envrionment
 This is the environment deployed by the 4 CloudFormation templates proposed here:
@@ -40,6 +45,28 @@ Look at this video for the detailed explanation and the demo: https://youtu.be/U
 
 ![](images/incident-response-workflow.jpg)
 
+# Deploying the Demo
+## Step 1: deploy Private VPC template
+* Deploy the __Production-VPC-template.yaml__ template
+* Give a name to the deployment stack. You'll need to give that name as an input parameter for later templates
+* You can choose to enable VPC Flow Logs to S3 and/or CloudWatch Logs
+![](images/template1.jpg)
+## Step 2: deploy Nginx web app template
+* Deploy the __NginxWebApp-template.yaml__ template
+* Give a name to the deployment stack. You'll need to give that name as an input parameter for later templates
+* Provide the stack name used to deploy the Production VPC template
+
+![](images/template2.jpg)
+Note steps 2 and 3 can be inverted/performed simultaneously since they  do not depend on each other.
+## Step 3: deploy Quarantine VPC template
+* Deploy the __Quarantine-VPC-template.yaml__ template
+* Give a name to the deployment stack. You'll need to give that name as an input parameter for the last template
+* Provide the stack name used to deploy the Production VPC template
+![](images/template3.jpg)
+## Step 4: deploy Forensic template
+* Deploy the __Forensic-template.yaml__ template
+* Provide the stack names used to deploy the Production VPC template, the Quarantine VPC template and the NGinx web app template
+![](images/template4.jpg)
 # Disclaimer
 The code provided in the Lambda functions performing the incident response and forensic analysis is written for AWS Ubuntu Server 18.04 LTS. If you choose a different Linux distribution, you will have to update at the minimum:
 * the code in the NginxWebApp-template.yaml file, used to deploy and configure Nginx on the EC2 instance after launch
