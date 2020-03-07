@@ -14,10 +14,11 @@ This is an example of an automated incident response and forensic analysis on AW
 
 # Pre-requisties
 * Activate AWS GuardDuty on your AWS account
-* Have a Slack channel ready. Alerts will be send to that channel
+* Have a Slack channel ready. Alerts will be sent to that channel
 * Download the two Lambda functions ZIP code (one is for the NginxWebApp YAML template, the other for the Forensic YAML tempalte) and save them into one of your S3 bucket.
-* Create SSH Key Pairs for your EC2 instances (In the __EC2 console__, go to __Network & Security__ > __Key Pairs__)
+* Create SSH Key Pairs for your EC2 instances (In the __EC2 console__, go to __Network & Security__ > __Key Pairs__). The same key will be installed on all instances (bastion host and Nginx web app instances). Extract the private key from the key pair in the OpenSSH format.
 * If you choose to enable VPC Flow Logs to S3, have a bucket ready for it
+* Prepare a S3 bucket where the outputs of the forensic analysis will be stored
 * Check the AMI name in your region of the AWS Ubuntu Server 18.04 LTS 
 ![](images/ami-name.jpg)
 
@@ -50,12 +51,12 @@ Look at this video for the detailed explanation and the demo: https://youtu.be/U
 * Deploy the __Production-VPC-template.yaml__ template
 * Give a name to the deployment stack. You'll need to give that name as an input parameter for later templates
 * You can choose to enable VPC Flow Logs to S3 and/or CloudWatch Logs
+* Give your public IP to allow remote SSH in the public subnets ACLs and the bastion host NSG. This will be used to 
 ![](images/template1.jpg)
 ## Step 2: deploy Nginx web app template
 * Deploy the __NginxWebApp-template.yaml__ template
 * Give a name to the deployment stack. You'll need to give that name as an input parameter for later templates
 * Provide the stack name used to deploy the Production VPC template
-
 ![](images/template2.jpg)
 Note steps 2 and 3 can be inverted/performed simultaneously since they  do not depend on each other.
 ## Step 3: deploy Quarantine VPC template
@@ -67,6 +68,21 @@ Note steps 2 and 3 can be inverted/performed simultaneously since they  do not d
 * Deploy the __Forensic-template.yaml__ template
 * Provide the stack names used to deploy the Production VPC template, the Quarantine VPC template and the NGinx web app template
 ![](images/template4.jpg)
+# Triggering the incident response and forensic
+## Automatic trigger
+1. SSH into the bastion host (granted you provided your public IP to the first template to allow SSH into the ACL and NSG)
+2. In the bastion host, in the ubuntu user's __~/.ssh__ folder create and __id_rsa__ file and copy paste into it your key pair's private key in the OpenSSH format.
+3. From there SSH into one of the two NginxWebApp instance
+4. go into the __/tmp/attack__ folder
+5. Launch one of the 3 script generating an improper security behavior:
+..* bitcoin-attack.sh
+..* dns-exfiltration-attack.sh
+..* backdoor-attack.sh
+## Manual trigger
+1. Copy the provided __guard-duty-event.json__ file
+2. Replace the instance ID __i-0011222aa333333b4__ by one of the NginxWebApp instance ID
+3. Open the __<your project name>_sec-ir-0-parseEventAndStartForensic__ Lambda function
+4. create a test with the JSON content and run it
 # Disclaimer
 The code provided in the Lambda functions performing the incident response and forensic analysis is written for AWS Ubuntu Server 18.04 LTS. If you choose a different Linux distribution, you will have to update at the minimum:
 * the code in the NginxWebApp-template.yaml file, used to deploy and configure Nginx on the EC2 instance after launch
