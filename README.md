@@ -15,7 +15,9 @@ This is an example of an automated incident response and forensic analysis on AW
 # Pre-requisties
 * Activate AWS GuardDuty on your AWS account
 * Have a Slack channel ready. Alerts will be sent to that channel
-* Download the two Lambda functions ZIP code (one is for the NginxWebApp YAML template, the other for the Forensic YAML tempalte) and save them into one of your S3 bucket.
+* Download the two Lambda functions ZIP code and save them into one of your S3 bucket
+  * one is for the function sending auto scaling notifications to the Slack channel
+  * the other one contains the code of all the incident response and forensic Lambda functions
 * Create SSH Key Pairs for your EC2 instances (In the __EC2 console__, go to __Network & Security__ > __Key Pairs__). The same key will be installed on all instances (bastion host and Nginx web app instances). Extract the private key from the key pair in the OpenSSH format.
 * If you choose to enable VPC Flow Logs to S3, have a bucket ready for it
 * Prepare a S3 bucket where the outputs of the forensic analysis will be stored
@@ -51,14 +53,14 @@ Look at this video for the detailed explanation and the demo: https://youtu.be/U
 * Deploy the __Production-VPC-template.yaml__ template
 * Give a name to the deployment stack. You'll need to give that name as an input parameter for later templates
 * You can choose to enable VPC Flow Logs to S3 and/or CloudWatch Logs
-* Give your public IP to allow remote SSH in the public subnets ACLs and the bastion host NSG. This will be used to 
+* Give your public IP to allow remote SSH in the public subnets ACLs and the bastion host NSG. You will need this and the bastion host to SSH into one of the Nginx instance and execute one of the script simulating an improper security behavior 
 ![](images/template1.jpg)
 ## Step 2: deploy Nginx web app template
 * Deploy the __NginxWebApp-template.yaml__ template
-* Give a name to the deployment stack. You'll need to give that name as an input parameter for later templates
+* Give a name to the deployment stack. You'll need to give that name as an input parameter for last template
 * Provide the stack name used to deploy the Production VPC template
 ![](images/template2.jpg)
-Note steps 2 and 3 can be inverted/performed simultaneously since they  do not depend on each other.
+Note: steps 2 and 3 can be inverted/performed simultaneously since they  do not depend on each other.
 ## Step 3: deploy Quarantine VPC template
 * Deploy the __Quarantine-VPC-template.yaml__ template
 * Give a name to the deployment stack. You'll need to give that name as an input parameter for the last template
@@ -75,9 +77,9 @@ Note steps 2 and 3 can be inverted/performed simultaneously since they  do not d
 3. From there SSH into one of the two NginxWebApp instance
 4. go into the __/tmp/attack__ folder
 5. Launch one of the 3 script generating an improper security behavior:
-..* bitcoin-attack.sh
-..* dns-exfiltration-attack.sh
-..* backdoor-attack.sh
+   * bitcoin-attack.sh
+   * dns-exfiltration-attack.sh
+   * backdoor-attack.sh
 ## Manual trigger
 1. Copy the provided __guard-duty-event.json__ file
 2. Replace the instance ID __i-0011222aa333333b4__ by one of the NginxWebApp instance ID
