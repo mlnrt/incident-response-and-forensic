@@ -18,7 +18,7 @@ This is an example of an automated incident response and forensic analysis on AW
 * Download the two Lambda functions ZIP code and save them into one of your S3 bucket
   * one is for the function sending auto scaling notifications to the Slack channel
   * the other one contains the code of all the incident response and forensic Lambda functions
-* Create SSH Key Pairs for your EC2 instances (In the __EC2 console__, go to __Network & Security__ > __Key Pairs__). The same key will be installed on all instances (bastion host and Nginx web app instances). Extract the private key from the key pair in the OpenSSH format.
+* Create SSH Key Pairs for your EC2 instances (In the __EC2 console__, go to __Network & Security__ > __Key Pairs__). The same key will be installed on all instances (bastion host and Nginx web app instances). Extract the private key from the key pair in the OpenSSH format. You'll need it to SSH from the bastion host into one of the Nginx web app instance.
 * If you choose to enable VPC Flow Logs to S3, have a bucket ready for it
 * Prepare a S3 bucket where the outputs of the forensic analysis will be stored
 * Check the AMI name in your region of the Ubuntu Server 18.04 LTS 
