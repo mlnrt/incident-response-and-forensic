@@ -80,6 +80,7 @@ Note: steps 2 and 3 can be inverted/performed simultaneously since they  do not 
    * __bitcoin-attack.sh__
    * __dns-exfiltration-attack.sh__
    * __backdoor-attack.sh__
+
 Note: Don't worry if the process is not triggered immediatley after launching one of these scripts. It takes at least 30 minutes for the incident to be reported by GuardDuty. And once reported it takes about 5 minutes for the CloudWatch Events Rule to pickup the event and trigger the Lambda function which will parse the event and launch the incident response and forensic StepFunction.
 ## Manual trigger
 1. Copy the provided __guard-duty-event.json__ file
