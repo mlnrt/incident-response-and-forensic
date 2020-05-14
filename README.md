@@ -21,7 +21,7 @@ Here are some changes compared to what is presented in the videos
 * Activate AWS GuardDuty on your AWS account
 * Have a Slack channel ready. Alerts will be sent to that channel
 * Download the YAML templates and two Lambda functions ZIP code and save them into one of your S3 bucket
-  * one is for the function sending auto scaling notifications to the Slack channel
+  * Lambda ZIP file is for the function sending auto scaling notifications to the Slack channel
   * the other one contains the code of all the incident response and forensic Lambda functions
 * Create SSH Key Pairs for your EC2 instances (In the __EC2 console__, go to __Network & Security__ > __Key Pairs__). The same key will be installed on all instances (bastion host and Nginx web app instances). Extract the private key from the key pair in the OpenSSH format. You'll need it to SSH from the bastion host into one of the Nginx web app instance.
 * If you choose to enable VPC Flow Logs to S3, have a bucket ready for it
