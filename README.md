@@ -78,10 +78,7 @@ Look at this video for the detailed explanation and the demo: https://youtu.be/U
 * Deploy the __incident-response-lab-00-master.yaml__ template
 * Give a name to the deployment stack.
 * You can choose to enable VPC Flow Logs to S3 and/or CloudWatch Logs
-![](images/template1.jpg)
-![](images/template2.jpg)
-![](images/template3.jpg)
-![](images/template4.jpg)
+![](images/master-template.jpg)
 # Triggering the incident response and forensic
 ## Automatic trigger
 1. SSH into the bastion host (granted you provided your public IP to the first template to allow SSH into the ACL and NSG)
