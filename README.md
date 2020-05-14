@@ -12,10 +12,15 @@ This is an example of an automated incident response and forensic analysis on AW
 * I also reused and modified a VPC CloudFormation template released by Levon Becker for Stelligent available here: https://github.com/stelligent/cloudformation_templates/blob/master/infrastructure/vpc.yml
 * I also reused shell scripts published by Ryan Holland and Oliver Cahagne hon AWS Labs to simulate security breaches to test GuardDuty: https://github.com/awslabs/amazon-guardduty-tester/blob/master/guardduty_tester.sh
 
+# Changes
+Here are some changes compared to what is presented in the videos
+* I removed the bastion host from the template to use AWS Systems Manager's Sessions Manager
+* I rewrote the templates to use nested YAML templates to provision all stacks at once
+
 # Pre-requisties
 * Activate AWS GuardDuty on your AWS account
 * Have a Slack channel ready. Alerts will be sent to that channel
-* Download the two Lambda functions ZIP code and save them into one of your S3 bucket
+* Download the YAML templates and two Lambda functions ZIP code and save them into one of your S3 bucket
   * one is for the function sending auto scaling notifications to the Slack channel
   * the other one contains the code of all the incident response and forensic Lambda functions
 * Create SSH Key Pairs for your EC2 instances (In the __EC2 console__, go to __Network & Security__ > __Key Pairs__). The same key will be installed on all instances (bastion host and Nginx web app instances). Extract the private key from the key pair in the OpenSSH format. You'll need it to SSH from the bastion host into one of the Nginx web app instance.
@@ -49,26 +54,33 @@ Look at this video for the detailed explanation and the demo: https://youtu.be/U
 ![](images/incident-response-workflow.jpg)
 
 # Deploying the Demo
-## Step 1: deploy Private VPC template
-* Deploy the __Production-VPC-template.yaml__ template
-* Give a name to the deployment stack. You'll need to give that name as an input parameter for later templates
+## Step 1: Prepare the input S3 bucket
+* put all the YAML templates and ZIP files containing the Lambda functions in one of your S3 bucket
+* Remove the "Block public access" lock from your S3 bucket
+* Grant CloudFormation read access to this S3 bucket so that it can go and pull the nested YAML templates. I use this bucket policy to do that
+```
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "CloudFormationGetObject",
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "cloudformation.amazonaws.com"
+            },
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::your-input-s3-bucket-name/*"
+        }
+    ]
+}
+```
+## Step 2: deploy the master template
+* Deploy the __incident-response-lab-00-master.yaml__ template
+* Give a name to the deployment stack.
 * You can choose to enable VPC Flow Logs to S3 and/or CloudWatch Logs
-* Give your public IP to allow remote SSH in the public subnets ACLs and the bastion host NSG. You will need this and the bastion host to SSH into one of the Nginx instance and execute one of the script simulating an improper security behavior 
 ![](images/template1.jpg)
-## Step 2: deploy Nginx web app template
-* Deploy the __NginxWebApp-template.yaml__ template
-* Give a name to the deployment stack. You'll need to give that name as an input parameter for last template
-* Provide the stack name used to deploy the Production VPC template
 ![](images/template2.jpg)
-Note: steps 2 and 3 can be inverted/performed simultaneously since they  do not depend on each other.
-## Step 3: deploy Quarantine VPC template
-* Deploy the __Quarantine-VPC-template.yaml__ template
-* Give a name to the deployment stack. You'll need to give that name as an input parameter for the last template
-* Provide the stack name used to deploy the Production VPC template
 ![](images/template3.jpg)
-## Step 4: deploy Forensic template
-* Deploy the __Forensic-template.yaml__ template
-* Provide the stack names used to deploy the Production VPC template, the Quarantine VPC template and the NGinx web app template
 ![](images/template4.jpg)
 # Triggering the incident response and forensic
 ## Automatic trigger
