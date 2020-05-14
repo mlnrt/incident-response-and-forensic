@@ -100,7 +100,7 @@ Note: Don't worry if the process is not triggered immediatley after launching on
 # Deleting the stack
 Before deleting the CloudFormation stack:
 1. Terminate the Forensic EC2 instance __\<your project name\>\_InstanceUnderForensics__ which was provisionned by a Lambda function in the Forensic VPC during the forensic analysis
-2. Delete the snapshot of the EC2 instance
+2. Delete the snapshot and volumes of the Forensic and Isolated EC2 instance
 After the deletion of the stack you can also delete the forensic analysis files generated in the output S3 bucket.
 
 # Disclaimer
