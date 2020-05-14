@@ -99,8 +99,16 @@ Note: Don't worry if the process is not triggered immediatley after launching on
 2. Replace the instance ID __i-0011222aa333333b4__ by one of the NginxWebApp instance ID
 3. Open the __\<your project name\>\_sec-ir-0-parseEventAndStartForensic__ Lambda function
 4. create a test with the JSON content and run it
+
+# Deleting the stack
+Before deleting the CloudFormation stack:
+1. Terminate the Forensic EC2 instance __\<your project name\>\_InstanceUnderForensics__ which was provisionned by a Lambda function in the Forensic VPC during the forensic analysis
+2. Delete the snapshot of the EC2 instance
+After the deletion of the stack you can also delete the forensic analysis files generated in the output S3 bucket.
+
 # Disclaimer
-The code provided in the Lambda functions performing the incident response and forensic analysis is written for Ubuntu Server 18.04 LTS. If you choose a different Linux distribution, you will have to update at the minimum:
+This is just a POC. It is not production ready.
+Also, the code provided in the Lambda functions performing the incident response and forensic analysis is written for Ubuntu Server 18.04 LTS. If you choose a different Linux distribution, you will have to update at the minimum:
 * the code in the NginxWebApp-template.yaml file, used to deploy and configure Nginx on the EC2 instance after launch
 * the code in the captureMemoryDumpForForensic.py Lambda function to install LiME on the instance and perform the memory dump
 * the code in the createForensicInstance.py to create the forensic instance in the Quarantine VPC and install all the tools (e.g. sleuthkit, vloatility...) to perform forensic analysis
