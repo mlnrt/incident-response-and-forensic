@@ -1,0 +1,402 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Master YAML template for the Incident Response and Forensic Lab by Matthieu Lienart
+
+############################################################################################
+#
+# Parameters
+#
+############################################################################################
+Parameters:
+  # IncidentResponseOwnership
+  IncidentResponseProjectName:
+    Description: The project name
+    Type: String
+    Default: LAB-IR
+  IncidentResponseOwner:
+    Type: String
+    Default: FirstName LastName
+  # Logging and alerts
+  IncidentResponseVPCFlowLogsS3BucketArn:
+    Description: S3 bucket where to store VPC flow logs. (leave blank if not wanted)
+    Type: String
+  IncidentResponseVPCFlowLogsCloudWatchLogGroup:
+    Description: CloudWatch log group name where to store VPC flow logs. (leave blank if not wanted)
+    Type: String
+  IncidentResponseVPCFlowLogsRetentionInDays:
+    Description: Specifies the number of days you want to retain log events.
+    Type: Number
+    Default: 14
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653]
+  IncidentResponseVPCFlowLogsTrafficType:
+    Description: The type of traffic to log.
+    Type: String
+    Default: ALL
+    AllowedValues:
+      - ACCEPT
+      - REJECT
+      - ALL
+  SlackWebHook:
+    Type: String
+    Description: Slack Web Hook URL
+    Default: https://hooks.slack.com/services/XXXXXXXXX/XXXXXXXXX/XXXXXXXXXXXXXXXXXXXXXXXX
+  SlackChannelName:
+    Type: String
+    Description: Slack Channel Name to publish the message to
+    Default: "#incident-response"
+  # Production VPC
+  IncidentResponseAvailabilityZones:
+    Description: 'List of 2 Availability Zones to use for the subnets in the VPC. Note:
+      The logical order is preserved.'
+    Type: List<AWS::EC2::AvailabilityZone::Name>
+  ProductionVPCSubnetCidrBlock:
+    Description: 172.16.0.0/21 = 172.16.0.0-172.16.7.255 = 8 Subnets = 2048 hosts
+    Type: String
+    Default: 172.16.0.0/21
+    MinLength: '10'
+    MaxLength: '18'
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+  ProductionPublicSubnet1Cidr:
+    Type: String
+    Default: 172.16.1.0/24
+    MinLength: '10'
+    MaxLength: '18'
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+  ProductionPublicSubnet2Cidr:
+    Type: String
+    Default: 172.16.2.0/24
+    MinLength: '10'
+    MaxLength: '18'
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+  ProductionPrivateSubnet1Cidr:
+    Type: String
+    Default: 172.16.3.0/24
+    MinLength: '10'
+    MaxLength: '18'
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+  ProductionPrivateSubnet2Cidr:
+    Type: String
+    Default: 172.16.4.0/24
+    MinLength: '10'
+    MaxLength: '18'
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+  #Quarantine VPC
+  QuarantineVPCSubnetCidrBlock:
+    Description: Cidr block for the quarantine VPC
+    Type: String
+    Default: 192.168.0.0/23
+    MinLength: '10'
+    MaxLength: '18'
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+  QuarantinePublicSubnetCidr:
+    Type: String
+    Default: 192.168.0.0/24
+    MinLength: '10'
+    MaxLength: '18'
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+  QuarantinePrivateSubnetCidr:
+    Type: String
+    Default: 192.168.1.0/24
+    MinLength: '10'
+    MaxLength: '18'
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+  # EC2 Instances Settings
+  EC2AMIID:
+    Type: AWS::EC2::Image::Id
+    Description: EC2 AMI ID of an Amazon Linux 2 AMI (e.g. ami-035966e8adab4aaad for Ubuntu Server 18.04 LTS (HVM) instances in eu-west-1)
+    Default: ami-035966e8adab4aaad
+  Ec2KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Public/private key pair name to allow to securely connect to instances
+  NginxInstanceType:
+    Description: Amazon EC2 instance type for the Nginx web application instances
+    Type: String
+    Default: t3.micro
+    AllowedValues:
+      - t3.micro
+      - t3.small
+      - t3.medium
+  NginxNodesDesiredCapacity:
+    Default: '2'
+    Description: The desired capacity for the Nginx Auto Scaling group
+    Type: Number
+  NginxNodesMaxSize:
+    Default: '3'
+    Description: The maximum size of the Nginx Auto Scaling group
+    Type: Number
+  NginxNodesMinSize:
+    Default: '2'
+    Description: The minimum size of the Nginx Plus Auto Scaling group
+    Type: Number
+  # Lambda Code
+  IncidentResponseS3BucketRegion:
+    Type: String
+    Description: region name of the code S3 bucket input and the analysis S3 bucket output
+  IncidentResponseCodeS3BucketName:
+    Type: String
+    Description: Bucket name where all YAML templates and the lambda functions code are located
+  SNSLambdaS3FileName:
+    Type: String
+    Description: File name of SNS lambda functions in S3
+    Default: SNS2Slack_AutoScaling_Alerts.zip
+  IncidentResponseLambdaS3FileName:
+    Type: String
+    Description: File name of Incident Response lambda functions in S3
+    Default: ir_lambdas.zip
+  OutputS3BucketName:
+    Type: String
+    Description: Bucket name where the Incident Response function will output the result of their investigations
+
+############################################################################################
+#
+# Metadata
+#
+############################################################################################
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: Incident Response Ownership
+      Parameters:
+        - IncidentResponseProjectName
+        - IncidentResponseOwner
+    - Label:
+        default: Code Location
+      Parameters:
+        - IncidentResponseS3BucketRegion
+        - IncidentResponseCodeS3BucketName
+        - IncidentResponseLambdaS3FileName
+        - SNSLambdaS3FileName
+        - OutputS3BucketName
+    - Label:
+        default: Availability Zones
+      Parameters:
+        - IncidentResponseAvailabilityZones
+    - Label:
+        default: Production VPC Networking
+      Parameters:
+        - ProductionVPCSubnetCidrBlock
+        - ProductionPublicSubnet1Cidr
+        - ProductionPublicSubnet2Cidr
+        - ProductionPrivateSubnet1Cidr
+        - ProductionPrivateSubnet2Cidr
+    - Label:
+        default: Quarantine VPC Networking
+      Parameters:
+        - QuarantineVPCSubnetCidrBlock
+        - QuarantinePublicSubnetCidr
+        - QuarantinePrivateSubnetCidr
+    - Label:
+        default: EC2 Instances Settings
+      Parameters:
+        - EC2AMIID
+        - Ec2KeyPairName
+        - NginxInstanceType
+        - NginxNodesDesiredCapacity
+        - NginxNodesMaxSize
+        - NginxNodesMinSize
+    - Label:
+        default: Logging and Alerting
+      Parameters:
+        - IncidentResponseVPCFlowLogsS3BucketArn
+        - IncidentResponseVPCFlowLogsCloudWatchLogGroup
+        - IncidentResponseVPCFlowLogsRetentionInDays
+        - IncidentResponseVPCFlowLogsTrafficType
+        - SlackWebHook
+        - SlackChannelName
+    ParameterLabels:
+      IncidentResponseProjectName:
+        default: Project name
+      IncidentResponseOwner:
+        default: Project owner name
+      IncidentResponseS3BucketRegion:
+        default: S3 buckets region name
+      IncidentResponseCodeS3BucketName:
+        default: Code S3 bucket name 
+      IncidentResponseLambdaS3FileName:
+        default: File name containing the Lambda forensics function
+      SNSLambdaS3FileName:
+        default: File name containing the Lambda SNS function
+      OutputS3BucketName:
+        default: Output S3 bucket name
+      IncidentResponseAvailabilityZones:
+        default: Availability Zones
+      ProductionVPCSubnetCidrBlock:
+        default: Production VPC Subnet Cidr Block
+      ProductionPublicSubnet1Cidr:
+        default: Production Public Subnet 1 Cidr
+      ProductionPublicSubnet2Cidr:
+        default: Production Public Subnet 2 Cidr
+      ProductionPrivateSubnet1Cidr:
+        default: Production Private Subnet 1 Cidr
+      ProductionPrivateSubnet2Cidr:
+        default: Production Private Subnet 2 Cidr
+      QuarantineVPCSubnetCidrBlock:
+        default: Quarantine VPC Subnet Cidr Block
+      QuarantinePublicSubnetCidr:
+        default: Quarantine Public Subnet Cidr
+      QuarantinePrivateSubnetCidr:
+        default: Quarantine Private Subnet Cidr
+      EC2AMIID:
+        default: EC2 AMI ID
+      Ec2KeyPairName:
+        default: Ec2 key pair name
+      NginxInstanceType:
+        default: EC2 Instance type
+      NginxNodesDesiredCapacity:
+        default: WebApp nodes desired capacity
+      NginxNodesMaxSize:
+        default: WebApp nodes maximum capacity
+      NginxNodesMinSize:
+        default: WebApp nodes minimum capacity
+      IncidentResponseVPCFlowLogsS3BucketArn:
+        default: VPC Flow Logs S3 bucket ARN
+      IncidentResponseVPCFlowLogsCloudWatchLogGroup:
+        default: VPC Flow Logs CloudWatch LogGroup
+      IncidentResponseVPCFlowLogsRetentionInDays:
+        default: VPC FlowLogs retention in days
+      IncidentResponseVPCFlowLogsTrafficType:
+        default: VPC FlowLogs traffic type
+      SlackWebHook:
+        default: Slack Web Hook
+      SlackChannelName:
+        default: Slack Channel Name
+
+############################################################################################
+#
+# Resources
+#
+############################################################################################
+Resources:
+   ProductionVPC:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        IncidentResponseProjectName:
+          !Ref IncidentResponseProjectName
+        IncidentResponseOwner:
+          !Ref IncidentResponseOwner
+        IncidentResponseAvailabilityZones:
+          !Join
+            - ','
+            - !Ref IncidentResponseAvailabilityZones
+        ProductionVPCSubnetCidrBlock:
+          !Ref ProductionVPCSubnetCidrBlock
+        ProductionPublicSubnet1Cidr:
+          !Ref ProductionPublicSubnet1Cidr
+        ProductionPublicSubnet2Cidr:
+          !Ref ProductionPublicSubnet2Cidr
+        ProductionPrivateSubnet1Cidr:
+          !Ref ProductionPrivateSubnet1Cidr
+        ProductionPrivateSubnet2Cidr:
+          !Ref ProductionPrivateSubnet2Cidr
+        IncidentResponseVPCFlowLogsS3BucketArn:
+          !Ref IncidentResponseVPCFlowLogsS3BucketArn
+        IncidentResponseVPCFlowLogsCloudWatchLogGroup:
+          !Ref IncidentResponseVPCFlowLogsCloudWatchLogGroup
+        IncidentResponseVPCFlowLogsRetentionInDays:
+          !Ref IncidentResponseVPCFlowLogsRetentionInDays
+        IncidentResponseVPCFlowLogsTrafficType:
+          !Ref IncidentResponseVPCFlowLogsTrafficType
+      TemplateURL: !Sub "https://${IncidentResponseCodeS3BucketName}.s3.${IncidentResponseS3BucketRegion}.amazonaws.com/incident-response-lab-01-production-vpc.yaml"
+   QuarantineVPC:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        IncidentResponseProjectName:
+          !Ref IncidentResponseProjectName
+        IncidentResponseOwner:
+          !Ref IncidentResponseOwner
+        IncidentResponseAvailabilityZone1:
+          !Select [ 0, !Ref IncidentResponseAvailabilityZones]
+        QuarantineVPCSubnetCidrBlock:
+          !Ref QuarantineVPCSubnetCidrBlock
+        QuarantinePublicSubnetCidr:
+          !Ref QuarantinePublicSubnetCidr
+        QuarantinePrivateSubnetCidr:
+          !Ref QuarantinePrivateSubnetCidr
+        IncidentResponseVPCFlowLogsRoleArn:
+          !GetAtt [ ProductionVPC, Outputs.IncidentResponseVPCFlowLogsRoleArn ]
+        IncidentResponseVPCFlowLogsS3BucketArn:
+          !Ref IncidentResponseVPCFlowLogsS3BucketArn
+        IncidentResponseVPCFlowLogsCloudWatchLogGroup:
+          !Ref IncidentResponseVPCFlowLogsCloudWatchLogGroup
+        IncidentResponseVPCFlowLogsTrafficType:
+          !Ref IncidentResponseVPCFlowLogsTrafficType
+      TemplateURL: !Sub "https://${IncidentResponseCodeS3BucketName}.s3.${IncidentResponseS3BucketRegion}.amazonaws.com/incident-response-lab-02-quarantine-vpc.yaml"
+   NginxWebApp:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        IncidentResponseProjectName:
+          !Ref IncidentResponseProjectName
+        IncidentResponseOwner:
+          !Ref IncidentResponseOwner
+        IncidentResponseCodeS3BucketName:
+          !Ref IncidentResponseCodeS3BucketName
+        SNSLambdaS3FileName:
+          !Ref SNSLambdaS3FileName
+        EC2AMIID:
+          !Ref EC2AMIID
+        Ec2KeyPairName:
+          !Ref Ec2KeyPairName
+        NginxInstanceType:
+          !Ref NginxInstanceType
+        NginxNodesDesiredCapacity:
+          !Ref NginxNodesDesiredCapacity
+        NginxNodesMaxSize:
+          !Ref NginxNodesMaxSize
+        NginxNodesMinSize:
+          !Ref NginxNodesMinSize
+        ProductionVPCId:
+          !GetAtt [ ProductionVPC, Outputs.ProductionVPCId]
+        ProductionPublicSubnet1Id:
+          !GetAtt [ ProductionVPC, Outputs.ProductionPublicSubnet1Id]
+        ProductionPublicSubnet2Id:
+          !GetAtt [ ProductionVPC, Outputs.ProductionPublicSubnet2Id]
+        ProductionPrivateSubnet1Id:
+          !GetAtt [ ProductionVPC, Outputs.ProductionPrivateSubnet1Id]
+        ProductionPrivateSubnet2Id:
+          !GetAtt [ ProductionVPC, Outputs.ProductionPrivateSubnet2Id]
+        SlackWebHook:
+          !Ref SlackWebHook
+        SlackChannelName:
+          !Ref SlackChannelName
+      TemplateURL: !Sub "https://${IncidentResponseCodeS3BucketName}.s3.${IncidentResponseS3BucketRegion}.amazonaws.com/incident-response-lab-03-nginx-webapp.yaml"
+   LambdaForensic:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        IncidentResponseProjectName:
+          !Ref IncidentResponseProjectName
+        IncidentResponseOwner:
+          !Ref IncidentResponseOwner
+        IncidentResponseCodeS3BucketName:
+          !Ref IncidentResponseCodeS3BucketName
+        IncidentResponseLambdaS3FileName:
+          !Ref IncidentResponseLambdaS3FileName
+        OutputS3BucketName:
+          !Ref OutputS3BucketName
+        OutputS3BucketRegion:
+          !Ref IncidentResponseS3BucketRegion
+        ProductionVPCId:
+          !GetAtt [ ProductionVPC, Outputs.ProductionVPCId]
+        QuarantineVPCId:
+          !GetAtt [ QuarantineVPC, Outputs.QuarantineVPCId]
+        QuarantinePrivateSubnetId:
+          !GetAtt [ QuarantineVPC, Outputs.QuarantinePrivateSubnetId]
+        QuarantinePrivateRouteTableId:
+          !GetAtt [ QuarantineVPC, Outputs.QuarantinePrivateRouteTableId]
+        QuarantinePrivateNetworkSSMVPCEndpointNSG:
+          !GetAtt [ QuarantineVPC, Outputs.QuarantinePrivateNetworkSSMVPCEndpointNSG]
+        EC2AMIID:
+          !Ref EC2AMIID
+        Ec2KeyPairName:
+          !Ref Ec2KeyPairName
+        NginxInstanceType:
+          !Ref NginxInstanceType
+        SlackWebHook:
+          !Ref SlackWebHook
+        SlackChannelName:
+          !Ref SlackChannelName
+      TemplateURL: !Sub "https://${IncidentResponseCodeS3BucketName}.s3.${IncidentResponseS3BucketRegion}.amazonaws.com/incident-response-lab-04-lambda-forensic.yaml"

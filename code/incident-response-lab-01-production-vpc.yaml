@@ -1,0 +1,897 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create a production VPC by Matthieu Lienart
+
+############################################################################################
+#
+# Parameters
+#
+############################################################################################
+Parameters:
+  # IncidentResponseOwnership
+  IncidentResponseProjectName:
+    Description: The project name
+    Type: String
+    Default: LAB-IR
+  IncidentResponseOwner:
+    Type: String
+    Default: FirstName LastName
+  # Logging and alerts
+  IncidentResponseVPCFlowLogsS3BucketArn:
+    Description: S3 bucket where to store VPC flow logs. (leave blank if not wanted)
+    Type: String
+  IncidentResponseVPCFlowLogsCloudWatchLogGroup:
+    Description: CloudWatch log group name where to store VPC flow logs. (leave blank if not wanted)
+    Type: String
+  IncidentResponseVPCFlowLogsRetentionInDays:
+    Description: Specifies the number of days you want to retain log events.
+    Type: Number
+    Default: 14
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653]
+  IncidentResponseVPCFlowLogsTrafficType:
+    Description: The type of traffic to log.
+    Type: String
+    Default: ALL
+    AllowedValues:
+      - ACCEPT
+      - REJECT
+      - ALL
+  # Production VPC
+  IncidentResponseAvailabilityZones:
+    Description: 'List of 2 Availability Zones to use for the subnets in the VPC. Note:
+      The logical order is preserved.'
+    Type: List<AWS::EC2::AvailabilityZone::Name>
+  ProductionVPCSubnetCidrBlock:
+    Description: 172.16.0.0/21 = 172.16.0.0-172.16.7.255 = 8 Subnets = 2048 hosts
+    Type: String
+    Default: 172.16.0.0/21
+    MinLength: '10'
+    MaxLength: '18'
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+  ProductionPublicSubnet1Cidr:
+    Type: String
+    Default: 172.16.1.0/24
+    MinLength: '10'
+    MaxLength: '18'
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+  ProductionPublicSubnet2Cidr:
+    Type: String
+    Default: 172.16.2.0/24
+    MinLength: '10'
+    MaxLength: '18'
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+  ProductionPrivateSubnet1Cidr:
+    Type: String
+    Default: 172.16.3.0/24
+    MinLength: '10'
+    MaxLength: '18'
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+  ProductionPrivateSubnet2Cidr:
+    Type: String
+    Default: 172.16.4.0/24
+    MinLength: '10'
+    MaxLength: '18'
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+
+
+############################################################################################
+#
+# Metadata
+#
+############################################################################################
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: IncidentResponseOwnership
+      Parameters:
+        - IncidentResponseProjectName
+        - IncidentResponseOwner
+    - Label:
+        default: Production VPC Networking
+      Parameters:
+        - IncidentResponseAvailabilityZones
+        - ProductionVPCSubnetCidrBlock
+        - ProductionPublicSubnet1Cidr
+        - ProductionPublicSubnet2Cidr
+        - ProductionPrivateSubnet1Cidr
+        - ProductionPrivateSubnet2Cidr
+    - Label:
+        default: Logging and Alerting
+      Parameters:
+        - IncidentResponseVPCFlowLogsS3BucketArn
+        - IncidentResponseVPCFlowLogsCloudWatchLogGroup
+        - IncidentResponseVPCFlowLogsRetentionInDays
+        - IncidentResponseVPCFlowLogsTrafficType
+
+############################################################################################
+#
+# Conditions
+#
+############################################################################################
+Conditions: 
+  StoreVPCFlowLogsInS3: !Not [!Equals [!Ref IncidentResponseVPCFlowLogsS3BucketArn, ""]]
+  StoreVPCFlowLogsInCloudWatch: !Not [!Equals [!Ref IncidentResponseVPCFlowLogsCloudWatchLogGroup, ""]]
+
+
+
+############################################################################################
+#
+# Resources
+#
+############################################################################################
+Resources:
+  ###########################
+  # Production VPC Networking
+  ###########################
+  IncidentResponseVPCFlowLogsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: StoreVPCFlowLogsInCloudWatch
+    Properties:
+      LogGroupName: !Ref IncidentResponseVPCFlowLogsCloudWatchLogGroup
+      RetentionInDays: !Ref IncidentResponseVPCFlowLogsRetentionInDays
+  IncidentResponseVPCFlowLogsRole:
+    Type: AWS::IAM::Role
+    Condition: StoreVPCFlowLogsInCloudWatch
+    Properties:
+      RoleName: !Sub "Role_${IncidentResponseProjectName}_Allow_Publish_To_CloudWatch_Logs"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 'vpc-flow-logs.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: !Sub "Policy_${IncidentResponseProjectName}_Allow_Publish_To_CloudWatch_Logs"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - 'logs:CreateLogStream'
+              - 'logs:PutLogEvents'
+              - 'logs:DescribeLogGroups'
+              - 'logs:DescribeLogStreams'
+              Resource: !GetAtt 'IncidentResponseVPCFlowLogsLogGroup.Arn'
+  ProductionVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: !Ref ProductionVPCSubnetCidrBlock
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_Production_VPC"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  CloudWatchFlowLogs:
+    Type: AWS::EC2::FlowLog
+    Condition: StoreVPCFlowLogsInCloudWatch
+    Properties:
+      DeliverLogsPermissionArn: !GetAtt 'IncidentResponseVPCFlowLogsRole.Arn'
+      LogGroupName: !Ref IncidentResponseVPCFlowLogsCloudWatchLogGroup
+      ResourceId: !Ref ProductionVPC
+      ResourceType: 'VPC'
+      TrafficType: !Ref IncidentResponseVPCFlowLogsTrafficType
+  S3FlowLogs:
+    Type: AWS::EC2::FlowLog
+    Condition: StoreVPCFlowLogsInS3
+    Properties:
+      LogDestinationType: s3
+      LogDestination: !Ref IncidentResponseVPCFlowLogsS3BucketArn
+      ResourceId: !Ref ProductionVPC
+      ResourceType: 'VPC'
+      TrafficType: !Ref IncidentResponseVPCFlowLogsTrafficType
+  ####################
+  # Public Subnet
+  ####################
+  ProductionPublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ProductionVPC
+      AvailabilityZone: !Select [ 0, !Ref IncidentResponseAvailabilityZones]
+      MapPublicIpOnLaunch: True
+      CidrBlock: !Ref ProductionPublicSubnet1Cidr
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_Production_Subnet_Public_AZ1"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  ProductionPublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ProductionVPC
+      AvailabilityZone: !Select [ 1, !Ref IncidentResponseAvailabilityZones]
+      MapPublicIpOnLaunch: True
+      CidrBlock: !Ref ProductionPublicSubnet2Cidr
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_Production_Subnet_Public_AZ2"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  ProductionInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_Production_InternetGateway"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  GatewayToInternet:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref ProductionVPC
+      InternetGatewayId: !Ref ProductionInternetGateway
+  ProductionPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ProductionVPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_Production_Public_RouteTable"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  ProductionPublicSubnetPublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref ProductionPublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref ProductionInternetGateway
+  ProductionPublicSubnetRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ProductionPublicSubnet1
+      RouteTableId: !Ref ProductionPublicRouteTable
+  ProductionPublicSubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ProductionPublicSubnet2
+      RouteTableId: !Ref ProductionPublicRouteTable
+  ####################
+  # Public Subnet ACLs
+  ####################
+  ProductionPublicNetworkAcl:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref ProductionVPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_Production_Public_ACL"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  # Public Network ACL Rules
+  InboundPublicNetworkAclAllowVPCSubnets:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPublicNetworkAcl
+      RuleNumber: 100
+      Protocol: -1
+      RuleAction: allow
+      Egress: false
+      CidrBlock: !Ref ProductionVPCSubnetCidrBlock
+      PortRange:
+        From: 0
+        To: 65535
+  InboundPublicNetworkAclAllowHTTP:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPublicNetworkAcl
+      RuleNumber: 200
+      Protocol: 6
+      RuleAction: allow
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 80
+        To: 80
+  InboundPublicNetworkAclAllowHTTPS:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPublicNetworkAcl
+      RuleNumber: 201
+      Protocol: 6
+      RuleAction: allow
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 443
+        To: 443
+  InboundPublicNetworkAclDenyMssql:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPublicNetworkAcl
+      RuleNumber: 800
+      Protocol: 6
+      RuleAction: deny
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 1433
+        To: 1433
+  InboundPublicNetworkAclDenyOracle:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPublicNetworkAcl
+      RuleNumber: 801
+      Protocol: 6
+      RuleAction: deny
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 1521
+        To: 1521
+  InboundPublicNetworkAclDenyAurora:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPublicNetworkAcl
+      RuleNumber: 802
+      Protocol: 6
+      RuleAction: deny
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 3306
+        To: 3306
+  InboundPublicNetworkAclDenyPostgre:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPublicNetworkAcl
+      RuleNumber: 803
+      Protocol: 6
+      RuleAction: deny
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 5432
+        To: 5432
+  InboundPublicNetworkAclDenyNfs:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPublicNetworkAcl
+      RuleNumber: 804
+      Protocol: 6
+      RuleAction: deny
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 2049
+        To: 2049
+  InboundPublicNetworkAclDenyRdp:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPublicNetworkAcl
+      RuleNumber: 805
+      Protocol: 6
+      RuleAction: deny
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 3389
+        To: 3389
+  InboundPublicNetworkAclDeny8080:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPublicNetworkAcl
+      RuleNumber: 810
+      Protocol: 6
+      RuleAction: deny
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 8080
+        To: 8080
+  InboundPublicNetworkAclDeny8443:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPublicNetworkAcl
+      RuleNumber: 811
+      Protocol: 6
+      RuleAction: deny
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 8443
+        To: 8443
+  InboundPublicNetworkAclAllowReturnTraffic:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPublicNetworkAcl
+      RuleNumber: 900
+      Protocol: 6
+      RuleAction: allow
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 1024
+        To: 65535
+  OutboundPublicNetworkAclAllowAll:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPublicNetworkAcl
+      RuleNumber: 100
+      Protocol: -1
+      RuleAction: allow
+      Egress: true
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 0
+        To: 65535
+  # Public Subnet Association
+  ProductionPublicSubnetNetworkAclAssociation1:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref ProductionPublicSubnet1
+      NetworkAclId: !Ref ProductionPublicNetworkAcl
+  ProductionPublicSubnetNetworkAclAssociation2:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref ProductionPublicSubnet2
+      NetworkAclId: !Ref ProductionPublicNetworkAcl
+  ####################
+  # Private Subnet
+  ####################
+  ProductionPrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ProductionVPC
+      AvailabilityZone: !Select [ 0, !Ref IncidentResponseAvailabilityZones]
+      CidrBlock: !Ref ProductionPrivateSubnet1Cidr
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_Production_Subnet_Private_AZ1"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  ProductionPrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ProductionVPC
+      AvailabilityZone: !Select [ 1, !Ref IncidentResponseAvailabilityZones]
+      CidrBlock: !Ref ProductionPrivateSubnet2Cidr
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_Production_Subnet_Private_AZ2"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  ProductionNATGatewayEIP:
+    Type: AWS::EC2::EIP
+    Properties: 
+      Domain: vpc
+      Tags: 
+          - Key: Name
+            Value: !Sub "${IncidentResponseProjectName}_Production_NatGateway_EIP"
+          - Key: Owner
+            Value: !Ref IncidentResponseOwner
+          - Key: Project
+            Value: !Ref AWS::StackName
+  ProductionNATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt ProductionNATGatewayEIP.AllocationId
+      SubnetId: !Ref ProductionPublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_NatGateway"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  ProductionPrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ProductionVPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_Production_Private_RouteTable"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  ProductionPrivateSubnetPublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref ProductionPrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref ProductionNATGateway
+  ProductionPrivateSubnetRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ProductionPrivateSubnet1
+      RouteTableId: !Ref ProductionPrivateRouteTable
+  ProductionPrivateSubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ProductionPrivateSubnet2
+      RouteTableId: !Ref ProductionPrivateRouteTable
+  S3VpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action: "*"
+            Effect: Allow
+            Resource: "*"
+            Principal: "*"
+      RouteTableIds:
+        - !Ref ProductionPrivateRouteTable
+        - !Ref ProductionPublicRouteTable
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      VpcId: !Ref ProductionVPC
+  ProductionSSMVPCEndpointNSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref ProductionVPC
+      GroupDescription: Allow SSM to connect to instances in the VPC Network
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref ProductionVPCSubnetCidrBlock
+          Description: "AWS System Manager access to EC2"
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_Production_SSM_VPC_Endpoint_SecurityGroup"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  ProductionSSMVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties: 
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ssm"
+      VpcEndpointType: Interface
+      VpcId: !Ref ProductionVPC
+      SecurityGroupIds: 
+        - !Ref ProductionSSMVPCEndpointNSG
+      SubnetIds:
+        - !Ref ProductionPublicSubnet2
+      PrivateDnsEnabled: true
+  ProductionEC2MessagesVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties: 
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ec2messages"
+      VpcEndpointType: Interface
+      VpcId: !Ref ProductionVPC
+      SecurityGroupIds: 
+        - !Ref ProductionSSMVPCEndpointNSG
+      SubnetIds:
+        - !Ref ProductionPublicSubnet2
+      PrivateDnsEnabled: true
+  ProductionSSMMessagesVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties: 
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ssmmessages"
+      VpcEndpointType: Interface
+      VpcId: !Ref ProductionVPC
+      SecurityGroupIds: 
+        - !Ref ProductionSSMVPCEndpointNSG
+      SubnetIds:
+        - !Ref ProductionPublicSubnet2
+      PrivateDnsEnabled: true
+  ####################
+  # Public Subnet ACLs
+  ####################
+  # Private Network ACL
+  ProductionPrivateNetworkAcl:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref ProductionVPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_Production_Private_ACL"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  # Private Network ACL Rules
+  InboundPrivateNetworkAclAllowVPCSubnets:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPrivateNetworkAcl
+      RuleNumber: 100
+      Protocol: -1
+      RuleAction: allow
+      Egress: false
+      CidrBlock: !Ref ProductionVPCSubnetCidrBlock
+      PortRange:
+        From: 0
+        To: 65535
+  InboundPrivateNetworkAclDenyMssql:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPrivateNetworkAcl
+      RuleNumber: 800
+      Protocol: 6
+      RuleAction: deny
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 1433
+        To: 1433
+  InboundPrivateNetworkAclDenyOracle:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPrivateNetworkAcl
+      RuleNumber: 801
+      Protocol: 6
+      RuleAction: deny
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 1521
+        To: 1521
+  InboundPrivateNetworkAclDenyAurora:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPrivateNetworkAcl
+      RuleNumber: 802
+      Protocol: 6
+      RuleAction: deny
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 3306
+        To: 3306
+  InboundPrivateNetworkAclDenyPostgre:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPrivateNetworkAcl
+      RuleNumber: 803
+      Protocol: 6
+      RuleAction: deny
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 5432
+        To: 5432
+  InboundPrivateNetworkAclDenyNfs:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPrivateNetworkAcl
+      RuleNumber: 804
+      Protocol: 6
+      RuleAction: deny
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 2049
+        To: 2049
+  InboundPrivateNetworkAclDenyRdp:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPrivateNetworkAcl
+      RuleNumber: 805
+      Protocol: 6
+      RuleAction: deny
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 3389
+        To: 3389
+  InboundPrivateNetworkAclDeny8080:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPrivateNetworkAcl
+      RuleNumber: 810
+      Protocol: 6
+      RuleAction: deny
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 8080
+        To: 8080
+  InboundPrivateNetworkAclDeny8443:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPrivateNetworkAcl
+      RuleNumber: 811
+      Protocol: 6
+      RuleAction: deny
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 8443
+        To: 8443
+  InboundPrivateNetworkAclAllowReturnTraffic:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPrivateNetworkAcl
+      RuleNumber: 900
+      Protocol: 6
+      RuleAction: allow
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 1024
+        To: 65535
+  OutboundPrivateNetworkAclAllowInternal:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPrivateNetworkAcl
+      RuleNumber: 100
+      Protocol: -1
+      RuleAction: allow
+      Egress: true
+      CidrBlock: !Ref ProductionVPCSubnetCidrBlock
+      PortRange:
+        From: 0
+        To: 65535
+  OutboundPrivateNetworkAclAllowHTTP:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPrivateNetworkAcl
+      RuleNumber: 200
+      Protocol: 6
+      RuleAction: allow
+      Egress: true
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 80
+        To: 80
+  OutboundPrivateNetworkAclAllowHTTPS:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref ProductionPrivateNetworkAcl
+      RuleNumber: 201
+      Protocol: 6
+      RuleAction: allow
+      Egress: true
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 443
+        To: 443
+  # Private Subnet Associations
+  PrivateSubnetNetworkAclAssociation:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId:
+        !Ref ProductionPrivateSubnet1
+      NetworkAclId:
+        !Ref ProductionPrivateNetworkAcl
+  PrivateSubnetNetworkAclAssociation2:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref ProductionPrivateSubnet2
+      NetworkAclId: !Ref ProductionPrivateNetworkAcl
+
+
+############################################################################################
+#
+# Outputs
+#
+############################################################################################
+Outputs:
+  #Parameters
+  IncidentResponseProjectName:
+    Description: The project name
+    Value: !Ref IncidentResponseProjectName
+    Export:
+      Name: !Sub "${AWS::StackName}-IncidentResponseProjectName"
+  IncidentResponseOwner:
+    Description: Team or Individual that Owns this Formation.
+    Value: !Ref IncidentResponseOwner
+    Export:
+      Name: !Sub "${AWS::StackName}-IncidentResponseOwner"
+  IncidentResponseVPCFlowLogsRetentionInDays:
+    Description: Specifies the number of days you want to retain log events.
+    Value: !Ref IncidentResponseVPCFlowLogsRetentionInDays
+    Export:
+      Name: !Sub "${AWS::StackName}-IncidentResponseVPCFlowLogsRetentionInDays"
+  IncidentResponseVPCFlowLogsTrafficType:
+    Description: The type of traffic to log.
+    Value: !Ref IncidentResponseVPCFlowLogsTrafficType
+    Export:
+      Name: !Sub "${AWS::StackName}-IncidentResponseVPCFlowLogsTrafficType"
+  IncidentResponseVPCFlowLogsLogGroup:
+    Condition: StoreVPCFlowLogsInCloudWatch
+    Description: Log Group of the VPC Flow Log
+    Value: !Ref IncidentResponseVPCFlowLogsLogGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-IncidentResponseVPCFlowLogsLogGroup"
+  IncidentResponseVPCFlowLogsRole:
+    Condition: StoreVPCFlowLogsInCloudWatch
+    Description: Role for VPC Flow Logs
+    Value: !Ref IncidentResponseVPCFlowLogsRole
+    Export:
+      Name: !Sub "${AWS::StackName}-IncidentResponseVPCFlowLogsRole"
+  IncidentResponseVPCFlowLogsRoleArn:
+    Condition: StoreVPCFlowLogsInCloudWatch
+    Description: Arn of the Role for VPC Flow Logs
+    Value: !GetAtt IncidentResponseVPCFlowLogsRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-IncidentResponseVPCFlowLogsRoleArn"
+  # VPC Information
+  IncidentResponseAvailabilityZones:
+    Description: Availability Zones
+    Value: !Join
+      - ','
+      - !Ref IncidentResponseAvailabilityZones
+    Export:
+      Name: !Sub "${AWS::StackName}-IncidentResponseAvailabilityZones"
+  IncidentResponseAvailabilityZone1:
+    Description: First Availability Zone
+    Value: !Select [ 0, !Ref IncidentResponseAvailabilityZones]
+    Export:
+      Name: !Sub "${AWS::StackName}-IncidentResponseAvailabilityZone1"
+  IncidentResponseAvailabilityZone2:
+    Description: Second Availability Zone
+    Value: !Select [ 1, !Ref IncidentResponseAvailabilityZones]
+    Export:
+      Name: !Sub "${AWS::StackName}-IncidentResponseAvailabilityZone2"
+  ProductionVPCId:
+    Description: Created Production VPC
+    Value: !Ref ProductionVPC
+    Export:
+      Name: !Sub "${AWS::StackName}-ProductionVPCId"
+  ProductionVPCSubnetCidrBlock:
+    Description: Production VPC Cidr Block
+    Value: !Ref ProductionVPCSubnetCidrBlock
+    Export:
+      Name: !Sub "${AWS::StackName}-ProductionVPCSubnetCidrBlock"
+  ProductionInternetGateway:
+    Description: Internet Gateway Created for the Production VPC
+    Value: !Ref ProductionInternetGateway
+    Export:
+      Name: !Sub "${AWS::StackName}-ProductionInternetGateway"
+  ProductionNATGateway:
+    Description: NAT Gateway Created for the private subnets of the Production VPC
+    Value: !Ref ProductionNATGateway
+    Export:
+      Name: !Sub "${AWS::StackName}-ProductionNATGateway"
+  # Subnets Information
+  ProductionPublicSubnet1Cidr:
+    Description: Production VPC Public Subnet 1 Cidr Block
+    Value: !Ref ProductionPublicSubnet1Cidr
+    Export:
+      Name: !Sub "${AWS::StackName}-ProductionPublicSubnet1Cidr"
+  ProductionPublicSubnet1Id:
+    Description: Production VPC Public Subnet 1 ID
+    Value: !Ref ProductionPublicSubnet1
+    Export:
+      Name: !Sub "${AWS::StackName}-ProductionPublicSubnet1Id"
+  ProductionPublicSubnet2Cidr:
+    Description: Production VPC Public Subnet 2 Cidr Block
+    Value: !Ref ProductionPublicSubnet2Cidr
+    Export:
+      Name: !Sub "${AWS::StackName}-ProductionPublicSubnet2Cidr"
+  ProductionPublicSubnet2Id:
+    Description: Production VPC Public Subnet 1 ID
+    Value: !Ref ProductionPublicSubnet2
+    Export:
+      Name: !Sub "${AWS::StackName}-ProductionPublicSubnet2Id"
+  ProductionPrivateSubnet1Cidr:
+    Description: Private Subnet IDs Created for VPC
+    Value: !Ref ProductionPrivateSubnet1Cidr
+    Export:
+      Name: !Sub "${AWS::StackName}-ProductionPrivateSubnet1Cidr"
+  ProductionPrivateSubnet1Id:
+    Description: Production VPC Private Subnet 1 ID
+    Value: !Ref ProductionPrivateSubnet1
+    Export:
+      Name: !Sub "${AWS::StackName}-ProductionPrivateSubnet1Id"
+  ProductionPrivateSubnet2Cidr:
+    Description: Private Subnet IDs Created for VPC
+    Value: !Ref ProductionPrivateSubnet2Cidr
+    Export:
+      Name: !Sub "${AWS::StackName}-ProductionPrivateSubnet2Cidr"
+  ProductionPrivateSubnet2Id:
+    Description: Production VPC Private Subnet 1 ID
+    Value: !Ref ProductionPrivateSubnet2
+    Export:
+      Name: !Sub "${AWS::StackName}-ProductionPrivateSubnet2Id"

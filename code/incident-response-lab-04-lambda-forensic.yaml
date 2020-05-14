@@ -1,0 +1,1258 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create the Incident Response by Amazon - modified by Matthieu Lienart
+
+############################################################################################
+#
+# Parameters
+#
+############################################################################################
+Parameters:
+  # IncidentResponseOwnership
+  IncidentResponseProjectName:
+    Description: The project name
+    Type: String
+    Default: LAB-IR
+  IncidentResponseOwner:
+    Type: String
+    Default: FirstName LastName
+  # Lambda Code
+  IncidentResponseCodeS3BucketName:
+    Type: String
+    Description: Bucket name where all YAML templates and the lambda functions code are located
+  IncidentResponseLambdaS3FileName:
+    Type: String
+    Description: File name of Incident Response lambda functions in S3
+    Default: ir_lambdas.zip
+  OutputS3BucketName:
+    Type: String
+    Description: Bucket name where the Incident Response function will output the result of their investigations
+  OutputS3BucketRegion:
+    Type: String
+    Description: Output S3 bucket region
+  # VPCs
+  ProductionVPCId:
+    Description: Production VPC Id
+    Type: AWS::EC2::VPC::Id
+  QuarantineVPCId:
+    Description: Quarantine VPC Id
+    Type: AWS::EC2::VPC::Id
+  QuarantinePrivateSubnetId:
+    Description: Quarantine VPC Private Subnet Id
+    Type: AWS::EC2::Subnet::Id  
+  QuarantinePrivateRouteTableId:
+    Description: Quarantine VPC Private Subnet Route Table Id
+    Type: String
+  QuarantinePrivateNetworkSSMVPCEndpointNSG:
+    Description: Quarantine VPC SSM Endpoint NSG
+    Type: String
+  # EC2 Instances Settings
+  EC2AMIID:
+    Type: AWS::EC2::Image::Id
+    Description: EC2 AMI ID of an Amazon Linux 2 AMI (e.g. ami-035966e8adab4aaad for Ubuntu Server 18.04 LTS (HVM) instances in eu-west-1)
+    Default: ami-035966e8adab4aaad
+  Ec2KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Public/private key pair name to allow to securely connect to instances
+  NginxInstanceType:
+    Description: Amazon EC2 instance type for the Nginx web application instances
+    Type: String
+    Default: t3.micro
+    AllowedValues:
+      - t3.micro
+      - t3.small
+      - t3.medium
+  # Logging and alerts
+  SlackWebHook:
+    Type: String
+    Description: Slack Web Hook URL
+  SlackChannelName:
+    Type: String
+    Description: Slack Channel Name to publish the message to
+    Default: "#incident-response"
+
+############################################################################################
+#
+# Metadata
+#
+############################################################################################
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: Incident Response Ownership
+      Parameters:
+        - IncidentResponseProjectName
+        - IncidentResponseOwner
+    - Label:
+        default: Lambda Code
+      Parameters:
+        - IncidentResponseCodeS3BucketName
+        - IncidentResponseLambdaS3FileName
+        - OutputS3BucketName
+        - OutputS3BucketRegion
+    - Label:
+        default: VPCs
+      Parameters:
+        - ProductionVPCId
+        - QuarantineVPCId
+        - QuarantinePrivateSubnetId
+        - QuarantinePrivateRouteTableId
+        - QuarantinePrivateNetworkSSMVPCEndpointNSG
+    - Label:
+        default: EC2 Instances Settings
+      Parameters:
+        - EC2AMIID
+        - Ec2KeyPairName
+        - NginxInstanceType
+    - Label:
+        default: Logging and Alerting
+      Parameters:
+        - SlackWebHook
+        - SlackChannelName
+
+
+############################################################################################
+#
+# Resources
+#
+############################################################################################
+Resources:
+  ##################
+  # S3 Endpoint
+  ##################
+  QuarantinePrivateNetworkS3VpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action: "*"
+            Effect: Allow
+            Resource: 
+              - !Sub "arn:aws:s3:::${OutputS3BucketName}"
+              - !Sub "arn:aws:s3:::${OutputS3BucketName}/*"
+            Principal: "*"
+      RouteTableIds:
+        - !Ref QuarantinePrivateRouteTableId
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      VpcId: !Ref QuarantineVPCId
+  QuarantineOutputS3BucketPolicy: 
+    Type: AWS::S3::BucketPolicy
+    Properties: 
+      Bucket: !Ref OutputS3BucketName
+      PolicyDocument: 
+        Fn::Sub: 
+          - '{
+              "Version": "2012-10-17",
+              "Id": "PolicyS3Endpoint1",
+              "Statement": [
+                {
+                  "Sid": "Access-to-specific-VPC-only",
+                  "Principal": "*",
+                  "Action": "s3:*",
+                  "Effect": "Allow",
+                  "Resource": ["arn:aws:s3:::${OutputS3BucketName}",
+                              "arn:aws:s3:::${OutputS3BucketName}/*"],
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:sourceVpc": "${QuarantineVPpcId}"
+                    }
+                  }
+                }
+              ]
+            }'
+          - QuarantineVPpcId: !Ref QuarantineVPCId
+  ############################
+  # Roles and Security Groups
+  ############################
+  IncidenResponseLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "Role_${IncidentResponseProjectName}_Allow_Incident_Response_Functions"
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action:
+          - sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+            - states.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+        - PolicyName: !Sub "${IncidentResponseProjectName}_Allow_Permissions_for_Incident_Response_Lambdas"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+                - logs:DescribeLog*
+              Resource: arn:aws:logs:*:*:*
+            - Effect: Allow
+              Action:
+                - ec2:*
+                - ssm:*
+                - elasticloadbalancing:*
+              Resource: "*"
+            - Sid: ListExistingRolesAndPolicies
+              Effect: Allow
+              Action:
+                - iam:ListRolePolicies
+                - iam:ListRoles
+                - iam:Pass*
+              Resource: "*"
+            - Sid: InvokePermission
+              Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource: "*"
+            - Sid: stepinvocation
+              Effect: Allow
+              Action:
+                - states:*
+              Resource: "*"
+
+  IsolatedInstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref ProductionVPCId
+      GroupDescription: Block all inbound and outbound access to isolate the instance
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 1
+          ToPort: 1
+          CidrIp: 127.0.0.1/32
+          Description: "Provisioning SGs with YAML if no egress rules are supplied, then the default -Allow All- rule is applied to the security group. So I add this rule which does nothing"
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_IsolatedInstance_SecurityGroup"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  ForensicInstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref QuarantineVPCId
+      GroupDescription: Block all inbound and outbound access to isolate the instance
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref QuarantinePrivateNetworkSSMVPCEndpointNSG
+          Description: "AWS System Manager access to EC2"
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: "Allow HTTP access (to download Forensic tools)"
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: "Allow HTTPS access (to download Forensic tools, access S3 and SSM)"
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_ForensicInstance_SecurityGroup"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  ForensicInstanceRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: "Role_for_Forensic_Instance"
+      Description: This Role gives access to the Forensic instance to SSM and S3
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 
+                - "ec2.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: !Sub "${IncidentResponseProjectName}_Allow_Forensics_Put_in_S3"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                Resource: !Sub "arn:aws:s3:::${OutputS3BucketName}/*"
+      Path: "/"
+  ForensicInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      InstanceProfileName: "Role_for_Forensic_Instance"
+      Path: "/"
+      Roles:
+        - !Ref ForensicInstanceRole
+
+
+  ############################
+  # Step Function
+  ############################
+  IncidentResponseStepFunction:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub "${IncidentResponseProjectName}_Incident_Response_StateMachine"
+      DefinitionString:
+        Fn::Join:
+          - ''
+          - - "{"
+            - '"Comment": " A state machine that submits a Job to AWS Batch and monitors the Job until it completes. ",'
+            - '"StartAt": "Report GuardDuty Finding",'
+            - '"States": {'
+            - '"Report GuardDuty Finding": {'
+            - '"Type": "Task",'
+            - '"Resource": "'
+            - Fn::GetAtt:
+                - sendGuardDutyFinding
+                - Arn
+            - "\","
+            - '"ResultPath": "$",'
+            - '"Next": "Create a Memory Dump of the Instance",'
+            - '"Retry": [{'
+            - '"ErrorEquals": ["States.ALL"],'
+            - '"IntervalSeconds": 1,'
+            - '"MaxAttempts": 3,'
+            - '"BackoffRate": 2.0'
+            - "}]"
+            - "},"
+            - '"Create a Memory Dump of the Instance": {'
+            - '"Type": "Task",'
+            - '"Resource": "'
+            - Fn::GetAtt:
+                - captureMemoryDumpForForensic
+                - Arn
+            - "\","
+            - '"InputPath": "$",'
+            - '"ResultPath": "$",'
+            - '"Next": "Wait for memory dump to complete",'
+            - '"Retry": [{'
+            - '"ErrorEquals": ["States.ALL"],'
+            - '"IntervalSeconds": 1,'
+            - '"MaxAttempts": 3,'
+            - '"BackoffRate": 2.0'
+            - "}]"
+            - "},"
+            - '"Wait for memory dump to complete": {'
+            - '"Type": "Wait",'
+            - '"SecondsPath": "$.wait_time",'
+            - '"Next": "Check Memory Dump Command State"'
+            - "},"
+            - '"Check Memory Dump Command State": {'
+            - '"Type": "Task",'
+            - '"Resource": "'
+            - Fn::GetAtt:
+                - checkCommandState
+                - Arn
+            - "\","
+            - '"InputPath": "$",'
+            - '"ResultPath": "$",'
+            - '"Next": "Memory Dump Complete?",'
+            - '"Retry": [{'
+            - '"ErrorEquals": ["States.ALL"],'
+            - '"IntervalSeconds": 1,'
+            - '"MaxAttempts": 3,'
+            - '"BackoffRate": 2.0'
+            - "}]"
+            - "},"
+            - '"Memory Dump Complete?": {'
+            - '"Type": "Choice",'
+            - '"Choices": [{'
+            - '"Variable": "$.COMMAND_STATUS",'
+            - '"StringEquals": "InProgress",'
+            - '"Next": "Wait for memory dump to complete"'
+            - "}, {"
+            - '"Variable": "$.COMMAND_STATUS",'
+            - '"StringEquals": "Pending",'
+            - '"Next": "Wait for memory dump to complete"'
+            - "}, {"
+            - '"Variable": "$.COMMAND_STATUS",'
+            - '"StringEquals": "Success",'
+            - '"Next": "Start Isolating the instance"'
+            - "}],"
+            - '"Default": "Memory Dump Failed"'
+            - "},"
+            - '"Memory Dump Failed": {'
+            - '"Type": "Fail",'
+            - '"Cause": "The memory dump of the affected instance has failed",'
+            - '"Error": "Memory Dump command returned Cancelled, Failed or TimeOut"'
+            - "},"
+            - '"Start Isolating the instance": {'
+            - '"Type": "Task",'
+            - '"Resource": "'
+            - Fn::GetAtt:
+                - isolateInstance
+                - Arn
+            - "\","
+            - '"Next": "Alert Security Team on Isolation and Incident",'
+            - '"InputPath": "$",'
+            - '"ResultPath": "$",'
+            - '"Retry": [{'
+            - '"ErrorEquals": ["States.ALL"],'
+            - '"IntervalSeconds": 1,'
+            - '"MaxAttempts": 3,'
+            - '"BackoffRate": 2.0'
+            - "}]"
+            - "},"
+            - '"Alert Security Team on Isolation and Incident": {'
+            - '"Type": "Task",'
+            - '"Resource": "'
+            - Fn::GetAtt:
+                - sendIsolationNotification
+                - Arn
+            - "\","
+            - '"InputPath": "$",'
+            - '"ResultPath": "$",'
+            - '"Next": "Create a Snapshot of the Instance",'
+            - '"Retry": [{'
+            - '"ErrorEquals": ["States.ALL"],'
+            - '"IntervalSeconds": 1,'
+            - '"MaxAttempts": 3,'
+            - '"BackoffRate": 2.0'
+            - "}]"
+            - "},"
+            - '"Create a Snapshot of the Instance": {'
+            - '"Type": "Task",'
+            - '"Resource": "'
+            - Fn::GetAtt:
+                - createSnapshotForForensic
+                - Arn
+            - "\","
+            - '"InputPath": "$",'
+            - '"ResultPath": "$.snapshotID",'
+            - '"Next": "Start Forensic Instance",'
+            - '"Retry": [{'
+            - '"ErrorEquals": ["States.ALL"],'
+            - '"IntervalSeconds": 1,'
+            - '"MaxAttempts": 3,'
+            - '"BackoffRate": 2.0'
+            - "}]"
+            - "},"
+            - '"Start Forensic Instance": {'
+            - '"Type": "Task",'
+            - '"Resource": "'
+            - Fn::GetAtt:
+                - createForensicInstance
+                - Arn
+            - "\","
+            - '"InputPath": "$",'
+            - '"ResultPath": "$",'
+            - '"Next": "Attach Volume For Forensic Analysis",'
+            - '"Retry": [{'
+            - '"ErrorEquals": ["States.ALL"],'
+            - '"IntervalSeconds": 1,'
+            - '"MaxAttempts": 3,'
+            - '"BackoffRate": 2.0'
+            - "}]"
+            - "},"
+            - '"Attach Volume For Forensic Analysis": {'
+            - '"Type": "Task",'
+            - '"Resource": "'
+            - Fn::GetAtt:
+                - attachAffectedVolume
+                - Arn
+            - "\","
+            - '"InputPath": "$",'
+            - '"Next": "SSM Activation Job Complete?",'
+            - '"Retry": [{'
+            - '"ErrorEquals": ["States.ALL"],'
+            - '"IntervalSeconds": 1,'
+            - '"MaxAttempts": 3,'
+            - '"BackoffRate": 2.0'
+            - "}]"
+            - "},"
+            - '"Wait for instance boot up": {'
+            - '"Type": "Wait",'
+            - '"SecondsPath": "$.wait_time",'
+            - '"Next": "IsSSMInstalled"'
+            - "},"
+            - '"IsSSMInstalled": {'
+            - '"Type": "Task",'
+            - '"Resource": "'
+            - Fn::GetAtt:
+                - IsSSMInstalled
+                - Arn
+            - "\","
+            - '"InputPath": "$",'
+            - '"Next": "SSM Activation Job Complete?",'
+            - '"Retry": [{'
+            - '"ErrorEquals": ["States.ALL"],'
+            - '"IntervalSeconds": 1,'
+            - '"MaxAttempts": 3,'
+            - '"BackoffRate": 2.0'
+            - "}]"
+            - "},"
+            - ''
+            - '"SSM Activation Job Complete?": {'
+            - '"Type": "Choice",'
+            - '"Choices": [{'
+            - '"Variable": "$.SSM_STATUS",'
+            - '"StringEquals": "FAILED",'
+            - '"Next": "SSM Activation Job Failed"'
+            - "}, {"
+            - '"Variable": "$.SSM_STATUS",'
+            - '"StringEquals": "SUCCEEDED",'
+            - '"Next": "Run Snapshot Forensic Analysis"'
+            - "}],"
+            - '"Default": "Wait for instance boot up"'
+            - "},"
+            - '"SSM Activation Job Failed": {'
+            - '"Type": "Fail",'
+            - '"Cause": "AWS SSM Activation Job Failed",'
+            - '"Error": "Describe Job returned FAILED"'
+            - "},"
+            - '"Run Snapshot Forensic Analysis": {'
+            - '"Type": "Task",'
+            - '"Resource": "'
+            - Fn::GetAtt:
+                - runSnapshotForensicAnalysis
+                - Arn
+            - "\","
+            - '"InputPath": "$",'
+            - '"ResultPath": "$",'
+            - '"Next": "Wait for Snapshot Forensic to complete",'
+            - '"Retry": [{'
+            - '"ErrorEquals": ["States.ALL"],'
+            - '"IntervalSeconds": 1,'
+            - '"MaxAttempts": 3,'
+            - '"BackoffRate": 2.0'
+            - "}]"
+            - "},"
+            - '"Wait for Snapshot Forensic to complete": {'
+            - '"Type": "Wait",'
+            - '"SecondsPath": "$.wait_time",'
+            - '"Next": "Check Snapshot Forensic Analysis State"'
+            - "},"
+            - '"Check Snapshot Forensic Analysis State": {'
+            - '"Type": "Task",'
+            - '"Resource": "'
+            - Fn::GetAtt:
+                - checkCommandState
+                - Arn
+            - "\","
+            - '"InputPath": "$",'
+            - '"ResultPath": "$",'
+            - '"Next": "Snapshot Forensic Analysis Completed?",'
+            - '"Retry": [{'
+            - '"ErrorEquals": ["States.ALL"],'
+            - '"IntervalSeconds": 1,'
+            - '"MaxAttempts": 3,'
+            - '"BackoffRate": 2.0'
+            - "}]"
+            - "},"
+            - '"Snapshot Forensic Analysis Completed?": {'
+            - '"Type": "Choice",'
+            - '"Choices": [{'
+            - '"Variable": "$.COMMAND_STATUS",'
+            - '"StringEquals": "InProgress",'
+            - '"Next": "Wait for Snapshot Forensic to complete"'
+            - "}, {"
+            - '"Variable": "$.COMMAND_STATUS",'
+            - '"StringEquals": "Pending",'
+            - '"Next": "Wait for Snapshot Forensic to complete"'
+            - "}, {"
+            - '"Variable": "$.COMMAND_STATUS",'
+            - '"StringEquals": "Success",'
+            - '"Next": "Run Memory Forensic Analysis"'
+            - "}],"
+            - '"Default": "Snapshot Forensic Analysis Failed"'
+            - "},"
+            - '"Snapshot Forensic Analysis Failed": {'
+            - '"Type": "Fail",'
+            - '"Cause": "The forensic analysis of the snapshot has failed",'
+            - '"Error": "The snapshot forensics commands returned Cancelled, Failed or TimeOut"'
+            - "},"
+            - '"Run Memory Forensic Analysis": {'
+            - '"Type": "Task",'
+            - '"Resource": "'
+            - Fn::GetAtt:
+                - runMemoryForensicAnalysis
+                - Arn
+            - "\","
+            - '"InputPath": "$",'
+            - '"ResultPath": "$",'
+            - '"Next": "Wait for Memory Forensic to complete",'
+            - '"Retry": [{'
+            - '"ErrorEquals": ["States.ALL"],'
+            - '"IntervalSeconds": 1,'
+            - '"MaxAttempts": 3,'
+            - '"BackoffRate": 2.0'
+            - "}]"
+            - "},"
+            - '"Wait for Memory Forensic to complete": {'
+            - '"Type": "Wait",'
+            - '"SecondsPath": "$.wait_time",'
+            - '"Next": "Check Memory Forensic Analysis State"'
+            - "},"
+            - '"Check Memory Forensic Analysis State": {'
+            - '"Type": "Task",'
+            - '"Resource": "'
+            - Fn::GetAtt:
+                - checkCommandState
+                - Arn
+            - "\","
+            - '"InputPath": "$",'
+            - '"ResultPath": "$",'
+            - '"Next": "Memory Forensic Analysis Completed?",'
+            - '"Retry": [{'
+            - '"ErrorEquals": ["States.ALL"],'
+            - '"IntervalSeconds": 1,'
+            - '"MaxAttempts": 3,'
+            - '"BackoffRate": 2.0'
+            - "}]"
+            - "},"
+            - '"Memory Forensic Analysis Completed?": {'
+            - '"Type": "Choice",'
+            - '"Choices": [{'
+            - '"Variable": "$.COMMAND_STATUS",'
+            - '"StringEquals": "InProgress",'
+            - '"Next": "Wait for Memory Forensic to complete"'
+            - "}, {"
+            - '"Variable": "$.COMMAND_STATUS",'
+            - '"StringEquals": "Pending",'
+            - '"Next": "Wait for Memory Forensic to complete"'
+            - "}, {"
+            - '"Variable": "$.COMMAND_STATUS",'
+            - '"StringEquals": "Success",'
+            - '"Next": "Send Forensic Complete Notification"'
+            - "}],"
+            - '"Default": "Memory Forensic Analysis Failed"'
+            - "},"
+            - '"Memory Forensic Analysis Failed": {'
+            - '"Type": "Fail",'
+            - '"Cause": "The forensic analysis of the Memory has failed",'
+            - '"Error": "The memory forensics commands returned Cancelled, Failed or TimeOut"'
+            - "},"
+            - '"Send Forensic Complete Notification": {'
+            - '"Type": "Task",'
+            - '"Resource": "'
+            - Fn::GetAtt:
+                - sendForensicNotification
+                - Arn
+            - "\","
+            - '"InputPath": "$",'
+            - '"ResultPath": "$",'
+            - '"Next": "Check Isolated Instance State",'
+            - '"Retry": [{'
+            - '"ErrorEquals": ["States.ALL"],'
+            - '"IntervalSeconds": 1,'
+            - '"MaxAttempts": 3,'
+            - '"BackoffRate": 2.0'
+            - "}]"
+            - "},"
+            - '"Check Isolated Instance State": {'
+            - '"Type": "Task",'
+            - '"Resource": "'
+            - Fn::GetAtt:
+                - checkIsolatedInstanceState
+                - Arn
+            - "\","
+            - '"InputPath": "$",'
+            - '"ResultPath": "$",'
+            - '"Next": "Stop Instance Complete?",'
+            - '"Retry": [{'
+            - '"ErrorEquals": ["States.ALL"],'
+            - '"IntervalSeconds": 1,'
+            - '"MaxAttempts": 3,'
+            - '"BackoffRate": 2.0'
+            - "}]"
+            - "},"
+            - '"Stop Instance Complete?": {'
+            - '"Type": "Choice",'
+            - '"Choices": [{'
+            - '"Variable": "$.INSTANCE_STATUS",'
+            - '"StringEquals": "running",'
+            - '"Next": "Stop Isolated Instance"'
+            - "},{"
+            - '"Variable": "$.INSTANCE_STATUS",'
+            - '"StringEquals": "stopping",'
+            - '"Next": "Wait for Instance Stopped"'
+            - "},{"
+            - '"Variable": "$.INSTANCE_STATUS",'
+            - '"StringEquals": "shutting-down",'
+            - '"Next": "Wait for Instance Stopped"'
+            - "},{"
+            - '"Variable": "$.INSTANCE_STATUS",'
+            - '"StringEquals": "stopped",'
+            - '"Next": "Send Isolated Instance Stopped Notification"'
+            - "},{"
+            - '"Variable": "$.INSTANCE_STATUS",'
+            - '"StringEquals": "terminated",'
+            - '"Next": "Send Isolated Instance Stopped Notification"'
+            - "}],"
+            - '"Default": "Stop Instance Job Failed"'
+            - "},"
+            - '"Stop Instance Job Failed": {'
+            - '"Type": "Fail",'
+            - '"Cause": "Isolated Instance Stop Instance Job Failed",'
+            - '"Error": "DescribeJob returned FAILED"'
+            - "},"
+            - '"Stop Isolated Instance": {'
+            - '"Type": "Task",'
+            - '"Resource": "'
+            - Fn::GetAtt:
+                - stopIsolatedInstance
+                - Arn
+            - "\","
+            - '"InputPath": "$",'
+            - '"ResultPath": "$",'
+            - '"Next": "Wait for Instance Stopped",'
+            - '"Retry": [{'
+            - '"ErrorEquals": ["States.ALL"],'
+            - '"IntervalSeconds": 1,'
+            - '"MaxAttempts": 3,'
+            - '"BackoffRate": 2.0'
+            - "}]"
+            - "},"
+            - '"Wait for Instance Stopped": {'
+            - '"Type": "Wait",'
+            - '"SecondsPath": "$.wait_time",'
+            - '"Next": "Check Isolated Instance State"'
+            - "},"
+            - '"Send Isolated Instance Stopped Notification": {'
+            - '"Type": "Task",'
+            - '"Resource": "'
+            - Fn::GetAtt:
+                - sendInstanceStoppedNotification
+                - Arn
+            - "\","
+            - '"InputPath": "$",'
+            - '"End": true,'
+            - '"Retry": [{'
+            - '"ErrorEquals": ["States.ALL"],'
+            - '"IntervalSeconds": 1,'
+            - '"MaxAttempts": 3,'
+            - '"BackoffRate": 2.0'
+            - "}]"
+            - "}"
+            - "}"
+            - "}"
+      RoleArn:
+        Fn::GetAtt:
+          - IncidenResponseLambdaExecutionRole
+          - Arn
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_Quarantine_VPC"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+
+  ############################
+  # Lambda Functions
+  ############################
+  parseEventAndStartForensic:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${IncidentResponseProjectName}_sec-ir-0-parseEventAndStartForensic"
+      Description: Function parse SNS message and invoke Step functions
+      Handler: parseEventAndStartForensic.lambda_handler
+      Runtime: python3.6
+      Timeout: 300
+      Role:
+        Fn::GetAtt:
+        - IncidenResponseLambdaExecutionRole
+        - Arn
+      Code:
+        S3Bucket:
+          !Ref IncidentResponseCodeS3BucketName
+        S3Key:
+          !Ref IncidentResponseLambdaS3FileName
+      Environment:
+        Variables:
+          STEP_FUNCTION_ARN: !Ref IncidentResponseStepFunction
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_sec-ir-0-parseEventAndStartForensic"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  sendGuardDutyFinding:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${IncidentResponseProjectName}_sec-ir-1-sendGuardDutyFinding"
+      Description: Function to report the GuardDuty Finding
+      Handler: sendGuardDutyFinding.lambda_handler
+      Runtime: python3.6
+      Timeout: 300
+      Role:
+        Fn::GetAtt:
+        - IncidenResponseLambdaExecutionRole
+        - Arn
+      Code:
+        S3Bucket:
+          !Ref IncidentResponseCodeS3BucketName
+        S3Key:
+          !Ref IncidentResponseLambdaS3FileName
+      Environment:
+        Variables:
+          HookUrl: !Ref SlackWebHook
+          SlackChannel: !Ref SlackChannelName
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_sec-ir-1-sendGuardDutyFinding"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  captureMemoryDumpForForensic:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${IncidentResponseProjectName}_sec-ir-2-captureMemoryDumpForForensic"
+      Description: Install LiME and capture a memory dump of the instance and store it localy
+      Handler: captureMemoryDumpForForensic.lambda_handler
+      Runtime: python3.6
+      Timeout: 300
+      Role:
+        Fn::GetAtt:
+        - IncidenResponseLambdaExecutionRole
+        - Arn
+      Code:
+        S3Bucket:
+          !Ref IncidentResponseCodeS3BucketName
+        S3Key:
+          !Ref IncidentResponseLambdaS3FileName
+      Environment:
+        Variables:
+          OUTPUT_S3_BUCKETNAME: !Ref OutputS3BucketName
+          OUTPUT_S3_BUCKETREGION: !Ref OutputS3BucketRegion
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_sec-ir-2-captureMemoryDumpForForensic"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  checkCommandState:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${IncidentResponseProjectName}_sec-ir-3-checkCommandState"
+      Description: Check that the memory dump is completed before proceed with the forensic steps
+      Handler: checkCommandState.lambda_handler
+      Runtime: python3.6
+      Timeout: 300
+      Role:
+        Fn::GetAtt:
+        - IncidenResponseLambdaExecutionRole
+        - Arn
+      Code:
+        S3Bucket:
+          !Ref IncidentResponseCodeS3BucketName
+        S3Key:
+          !Ref IncidentResponseLambdaS3FileName
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_sec-ir-3-checkCommandState"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  isolateInstance:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${IncidentResponseProjectName}_sec-ir-4-isolateInstance"
+      Description: Function to isolate Ec2 instance
+      Handler: isolateInstance.lambda_handler
+      Runtime: python3.6
+      Timeout: 300
+      Role:
+        Fn::GetAtt:
+        - IncidenResponseLambdaExecutionRole
+        - Arn
+      Code:
+        S3Bucket:
+          !Ref IncidentResponseCodeS3BucketName
+        S3Key:
+          !Ref IncidentResponseLambdaS3FileName
+      Environment:
+        Variables:
+          ISOLATED_SECUTRITYGROUP: !Ref IsolatedInstanceSecurityGroup
+          TAG_PROJECT: !Ref IncidentResponseProjectName
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_sec-ir-4-isolateInstance"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  sendIsolationNotification:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${IncidentResponseProjectName}_sec-ir-5-sendIsolationNotification"
+      Description: Function to Send notification for instance Isolation and Snapshot creation
+      Handler: sendIsolationNotification.lambda_handler
+      Runtime: python3.6
+      Timeout: 300
+      Role:
+        Fn::GetAtt:
+        - IncidenResponseLambdaExecutionRole
+        - Arn
+      Code:
+        S3Bucket:
+          !Ref IncidentResponseCodeS3BucketName
+        S3Key:
+          !Ref IncidentResponseLambdaS3FileName
+      Environment:
+        Variables:
+          HookUrl: !Ref SlackWebHook
+          SlackChannel: !Ref SlackChannelName
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_sec-ir-5-sendIsolationNotification"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  createSnapshotForForensic:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${IncidentResponseProjectName}_sec-ir-6-createSnapshotForForensic"
+      Description: Function to isolate Ec2 instance
+      Handler: createSnapshotForForensic.lambda_handler
+      Runtime: python3.6
+      Timeout: 300
+      Role:
+        Fn::GetAtt:
+        - IncidenResponseLambdaExecutionRole
+        - Arn
+      Code:
+        S3Bucket:
+          !Ref IncidentResponseCodeS3BucketName
+        S3Key:
+          !Ref IncidentResponseLambdaS3FileName
+      Environment:
+        Variables:
+          ISOLATED_SECUTRITYGROUP: !Ref IsolatedInstanceSecurityGroup
+          TAG_OWNER: !Ref IncidentResponseOwner
+          TAG_PROJECT: !Ref IncidentResponseProjectName
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_sec-ir-6-createSnapshotForForensic"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  createForensicInstance:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${IncidentResponseProjectName}_sec-ir-7-createForensicInstance"
+      Description: Function to Send notification for instance Isolation and Snapshot
+        creation
+      Handler: createForensicInstance.lambda_handler
+      Runtime: python3.6
+      Timeout: 300
+      Role:
+        Fn::GetAtt:
+        - IncidenResponseLambdaExecutionRole
+        - Arn
+      Code:
+        S3Bucket:
+          !Ref IncidentResponseCodeS3BucketName
+        S3Key:
+          !Ref IncidentResponseLambdaS3FileName
+      Environment:
+        Variables:
+          FORENSIC_SECUTRITYGROUP: !Ref ForensicInstanceSecurityGroup
+          AMI_ID: !Ref EC2AMIID
+          INSTANCE_TYPE: !Ref NginxInstanceType
+          INSTANCE_PROFILE_ARN: !GetAtt ForensicInstanceProfile.Arn
+          SUBNET_ID: !Ref QuarantinePrivateSubnetId
+          EC2_KEYPAIR: !Ref Ec2KeyPairName
+          TAG_OWNER: !Ref IncidentResponseOwner
+          TAG_PROJECT: !Ref IncidentResponseProjectName
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_sec-ir-7-createForensicInstance"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  attachAffectedVolume:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${IncidentResponseProjectName}_sec-ir-8-attachAffectedVolume"
+      Description: Function to Create and attach volume created from Snapshot
+      Handler: attachAffectedVolume.lambda_handler
+      Runtime: python3.6
+      Timeout: 300
+      Role:
+        Fn::GetAtt:
+        - IncidenResponseLambdaExecutionRole
+        - Arn
+      Code:
+        S3Bucket:
+          !Ref IncidentResponseCodeS3BucketName
+        S3Key:
+          !Ref IncidentResponseLambdaS3FileName
+      Environment:
+        Variables:
+          ISOLATED_SECUTRITYGROUP: !Ref ForensicInstanceSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_sec-ir-8-attachAffectedVolume"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  IsSSMInstalled:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${IncidentResponseProjectName}_sec-ir-9-isSSMInstalled"
+      Description: Function to Check SSM is installed or not
+      Handler: isSSMInstalled.lambda_handler
+      Runtime: python3.6
+      Timeout: 300
+      Role:
+        Fn::GetAtt:
+        - IncidenResponseLambdaExecutionRole
+        - Arn
+      Code:
+        S3Bucket:
+          !Ref IncidentResponseCodeS3BucketName
+        S3Key:
+          !Ref IncidentResponseLambdaS3FileName
+      Environment:
+        Variables:
+          ISOLATED_SECUTRITYGROUP: !Ref IsolatedInstanceSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_sec-ir-9-isSSMInstalled"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  runSnapshotForensicAnalysis:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${IncidentResponseProjectName}_sec-ir-10-runSnapshotForensicAnalysis"
+      Description: Function to Run Forensic Analysis
+      Handler: runSnapshotForensicAnalysis.lambda_handler
+      Runtime: python3.6
+      Timeout: 300
+      Role:
+        Fn::GetAtt:
+        - IncidenResponseLambdaExecutionRole
+        - Arn
+      Code:
+        S3Bucket: !Ref IncidentResponseCodeS3BucketName
+        S3Key: !Ref IncidentResponseLambdaS3FileName
+      Environment:
+        Variables:
+          OUTPUT_S3_BUCKETNAME: !Ref OutputS3BucketName
+          OUTPUT_S3_BUCKETREGION: !Ref OutputS3BucketRegion
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_sec-ir-10-runSnapshotForensicAnalysis"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  runMemoryForensicAnalysis:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${IncidentResponseProjectName}_sec-ir-11-runMemoryForensicAnalysis"
+      Description: Function to Run Forensic Analysis
+      Handler: runMemoryForensicAnalysis.lambda_handler
+      Runtime: python3.6
+      Timeout: 300
+      Role:
+        Fn::GetAtt:
+        - IncidenResponseLambdaExecutionRole
+        - Arn
+      Code:
+        S3Bucket: !Ref IncidentResponseCodeS3BucketName
+        S3Key: !Ref IncidentResponseLambdaS3FileName
+      Environment:
+        Variables:
+          OUTPUT_S3_BUCKETNAME: !Ref OutputS3BucketName
+          OUTPUT_S3_BUCKETREGION: !Ref OutputS3BucketRegion
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_sec-ir-11-runMemoryForensicAnalysis"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  sendForensicNotification:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${IncidentResponseProjectName}_sec-ir-12-sendForensicNotification"
+      Description: Function to Send notification after forensic analysis
+      Handler: sendForensicNotification.lambda_handler
+      Runtime: python3.6
+      Timeout: 300
+      Role:
+        Fn::GetAtt:
+        - IncidenResponseLambdaExecutionRole
+        - Arn
+      Code:
+        S3Bucket:
+          !Ref IncidentResponseCodeS3BucketName
+        S3Key:
+          !Ref IncidentResponseLambdaS3FileName
+      Environment:
+        Variables:
+          HookUrl: !Ref SlackWebHook
+          SlackChannel: !Ref SlackChannelName
+          OUTPUT_S3_BUCKETNAME: !Ref OutputS3BucketName
+          OUTPUT_S3_BUCKETREGION: !Ref OutputS3BucketRegion
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_sec-ir-12-sendForensicNotification"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  stopIsolatedInstance:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${IncidentResponseProjectName}_sec-ir-13-stopIsolatedInstance"
+      Description: Function to stop the isolated instance
+      Handler: stopIsolatedInstance.lambda_handler
+      Runtime: python3.6
+      Timeout: 300
+      Role:
+        Fn::GetAtt:
+        - IncidenResponseLambdaExecutionRole
+        - Arn
+      Code:
+        S3Bucket:
+          !Ref IncidentResponseCodeS3BucketName
+        S3Key:
+          !Ref IncidentResponseLambdaS3FileName
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_sec-ir-13-stopIsolatedInstance"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  checkIsolatedInstanceState:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${IncidentResponseProjectName}_sec-ir-14-checkIsolatedInstanceState"
+      Description: Function to check the status of the isolaed instance to see if it is stopped
+      Handler: checkIsolatedInstanceState.lambda_handler
+      Runtime: python3.6
+      Timeout: 300
+      Role:
+        Fn::GetAtt:
+        - IncidenResponseLambdaExecutionRole
+        - Arn
+      Code:
+        S3Bucket:
+          !Ref IncidentResponseCodeS3BucketName
+        S3Key:
+          !Ref IncidentResponseLambdaS3FileName
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_sec-ir-14-checkIsolatedInstanceState"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+  sendInstanceStoppedNotification:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${IncidentResponseProjectName}_sec-ir-15-sendInstanceStoppedNotification"
+      Description: Function to Send notification after the isolated instance has been stopped
+      Handler: sendInstanceStoppedNotification.lambda_handler
+      Runtime: python3.6
+      Timeout: 300
+      Role:
+        Fn::GetAtt:
+        - IncidenResponseLambdaExecutionRole
+        - Arn
+      Code:
+        S3Bucket:
+          !Ref IncidentResponseCodeS3BucketName
+        S3Key:
+          !Ref IncidentResponseLambdaS3FileName
+      Environment:
+        Variables:
+          HookUrl: !Ref SlackWebHook
+          SlackChannel: !Ref SlackChannelName
+      Tags:
+        - Key: Name
+          Value: !Sub "${IncidentResponseProjectName}_sec-ir-15-sendInstanceStoppedNotification"
+        - Key: Owner
+          Value: !Ref IncidentResponseOwner
+        - Key: Project
+          Value: !Ref IncidentResponseProjectName
+
+  ###############################
+  # CloudWatch Event
+  ###############################
+  GuardDutyFindingEventsRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${IncidentResponseProjectName}_GuardDuty_Findings"
+      Description: Rule for GardDuty Findings
+      EventPattern: 
+        source: 
+          - "aws.guardduty"
+        detail-type:
+          - "GuardDuty Finding"
+      State: ENABLED
+      Targets: 
+        - Arn:
+            !GetAtt parseEventAndStartForensic.Arn
+          Id: !Sub "${IncidentResponseProjectName}_parseEventAndStartForensic"
+  AllowEventsToInvokeLambda: 
+    Type: AWS::Lambda::Permission
+    Properties: 
+      FunctionName:
+        !Ref parseEventAndStartForensic
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn:
+        !GetAtt GuardDutyFindingEventsRule.Arn
+
+
+############################################################################################
+#
+# Outputs
+#
+############################################################################################
+Outputs:
+  IncidentResponseForensicStackName:
+    Description: The name of this incident response forensic stack
+    Value: !Sub ${AWS::StackName}
+    Export:
+      Name: !Sub "${AWS::StackName}-IncidentResponseForensicStackName"
+  IncidentResponseCodeS3BucketName:
+    Description: Name of the S3 bucket containing the incident response functions code
+    Value: !Ref IncidentResponseCodeS3BucketName
+    Export:
+      Name: !Sub "${AWS::StackName}-IncidentResponseCodeS3BucketName"
+  IncidentResponseLambdaS3FileName:
+    Description: Name of the file containing the incident response functions code
+    Value: !Ref IncidentResponseLambdaS3FileName
+    Export:
+      Name: !Sub "${AWS::StackName}-IncidentResponseLambdaS3FileName"
+  OutputS3BucketName:
+    Description: Bucket name - in the same region than this deployment stack (because of VPC Ednpoints) - where the Incident Response functions will output the result of their investigations
+    Value: !Ref OutputS3BucketName
+    Export:
+      Name: !Sub "${AWS::StackName}-OutputS3BucketName"
+  OutputS3BucketRegion:
+    Description: Region of the S3 bucket used to output the results of the forensic analysis
+    Value: !Ref OutputS3BucketRegion
+    Export:
+      Name: !Sub "${AWS::StackName}-OutputS3BucketRegion"
+
+
+
