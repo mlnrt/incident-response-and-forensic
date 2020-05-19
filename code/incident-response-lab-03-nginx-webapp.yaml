@@ -27,8 +27,9 @@ Parameters:
   NginxInstanceType:
     Description: Amazon EC2 instance type for the Nginx web application instances
     Type: String
-    Default: t3.micro
+    Default: t2.micro
     AllowedValues:
+      - t2.micro
       - t3.micro
       - t3.small
       - t3.medium
